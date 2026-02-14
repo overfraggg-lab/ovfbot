@@ -1,0 +1,20 @@
+=== Bot iniciado em 2026-02-09T18:33:20.244Z ===
+[2026-02-09T18:33:20.245Z] A procurar .env...
+[2026-02-09T18:33:20.249Z] Verificando: c:\Users\pedro\Desktop\site-docker\site\SITE_OVERFRAG_11.0\overfrag_bot\.env
+[2026-02-09T18:33:20.250Z] .env carregado de: c:\Users\pedro\Desktop\site-docker\site\SITE_OVERFRAG_11.0\overfrag_bot\.env
+[2026-02-09T18:33:20.251Z] Token presente: SIM (${process.env.DISCORD_BOT_TOKEN.substring(0,20)}...)
+[2026-02-09T18:33:20.251Z] Guild ID: 1260254650964119716
+[2026-02-09T18:33:20.252Z] A importar módulos...
+[2026-02-09T18:33:20.253Z] Módulos importados com sucesso
+[2026-02-09T18:33:20.254Z] ==================================================
+[2026-02-09T18:33:20.254Z] OVERFRAG Discord Bot v3.0
+[2026-02-09T18:33:20.255Z] ==================================================
+[2026-02-09T18:33:20.255Z] Token encontrado, a iniciar...
+[2026-02-09T18:33:20.256Z] startBot() chamado
+[2026-02-09T18:33:20.256Z] CONFIG.TOKEN presente: SIM
+[2026-02-09T18:33:20.256Z] A criar cliente Discord...
+[2026-02-09T18:33:20.290Z] A fazer login no Discord...
+[2026-02-09T18:33:21.080Z] Login bem sucedido!
+[2026-02-09T18:33:21.081Z] Bot iniciado com sucesso!
+[2026-02-09T18:33:21.094Z] ✅ OVERFRAG#7475 conectado!
+[2026-02-09T18:33:21.095Z] Servidores: 2

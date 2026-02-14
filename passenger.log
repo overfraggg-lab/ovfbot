@@ -1,0 +1,73 @@
+App 661749 output: /opt/cpanel/ea-ruby27/root/usr/share/passenger/helper-scripts/node-loader.js:80
+App 661749 output: 	return originalRequire.apply(this, arguments);
+App 661749 output:                         ^
+App 661749 output: Error [ERR_REQUIRE_ESM]: require() of ES Module /home/overfrag/overfrag_bot/index.js from /opt/cpanel/ea-ruby27/root/usr/share/passenger/helper-scripts/node-loader.js not supported.
+App 661749 output: Instead change the require of index.js in /opt/cpanel/ea-ruby27/root/usr/share/passenger/helper-scripts/node-loader.js to a dynamic import() which is available in all CommonJS modules.
+App 661749 output:     at Module.require (/opt/cpanel/ea-ruby27/root/usr/share/passenger/helper-scripts/node-loader.js:80:25)
+App 661749 output:     at loadApplication (/opt/cpanel/ea-ruby27/root/usr/share/passenger/helper-scripts/node-loader.js:243:2)
+App 661749 output:     at setupEnvironment (/opt/cpanel/ea-ruby27/root/usr/share/passenger/helper-scripts/node-loader.js:214:2)
+App 661749 output:     at Object.<anonymous> (/opt/cpanel/ea-ruby27/root/usr/share/passenger/helper-scripts/node-loader.js:133:1) {
+App 661749 output:   code: 'ERR_REQUIRE_ESM'
+App 661749 output: }
+App 661749 output: Node.js v18.20.8
+App 662156 output: /opt/cpanel/ea-ruby27/root/usr/share/passenger/helper-scripts/node-loader.js:80
+App 662156 output: 	return originalRequire.apply(this, arguments);
+App 662156 output:                         ^
+App 662156 output: Error [ERR_REQUIRE_ESM]: require() of ES Module /home/overfrag/overfrag_bot/index.js from /opt/cpanel/ea-ruby27/root/usr/share/passenger/helper-scripts/node-loader.js not supported.
+App 662156 output: Instead change the require of index.js in /opt/cpanel/ea-ruby27/root/usr/share/passenger/helper-scripts/node-loader.js to a dynamic import() which is available in all CommonJS modules.
+App 662156 output:     at Module.require (/opt/cpanel/ea-ruby27/root/usr/share/passenger/helper-scripts/node-loader.js:80:25)
+App 662156 output:     at loadApplication (/opt/cpanel/ea-ruby27/root/usr/share/passenger/helper-scripts/node-loader.js:243:2)
+App 662156 output:     at setupEnvironment (/opt/cpanel/ea-ruby27/root/usr/share/passenger/helper-scripts/node-loader.js:214:2)
+App 662156 output:     at Object.<anonymous> (/opt/cpanel/ea-ruby27/root/usr/share/passenger/helper-scripts/node-loader.js:133:1) {
+App 662156 output:   code: 'ERR_REQUIRE_ESM'
+App 662156 output: }
+App 662156 output: Node.js v18.20.8
+App 664193 output: /opt/cpanel/ea-ruby27/root/usr/share/passenger/helper-scripts/node-loader.js:80
+App 664193 output: 	return originalRequire.apply(this, arguments);
+App 664193 output:                         ^
+App 664193 output: Error [ERR_REQUIRE_ESM]: require() of ES Module /home/overfrag/overfrag_bot/index.js from /opt/cpanel/ea-ruby27/root/usr/share/passenger/helper-scripts/node-loader.js not supported.
+App 664193 output: Instead change the require of index.js in /opt/cpanel/ea-ruby27/root/usr/share/passenger/helper-scripts/node-loader.js to a dynamic import() which is available in all CommonJS modules.
+App 664193 output:     at Module.require (/opt/cpanel/ea-ruby27/root/usr/share/passenger/helper-scripts/node-loader.js:80:25)
+App 664193 output:     at loadApplication (/opt/cpanel/ea-ruby27/root/usr/share/passenger/helper-scripts/node-loader.js:243:2)
+App 664193 output:     at setupEnvironment (/opt/cpanel/ea-ruby27/root/usr/share/passenger/helper-scripts/node-loader.js:214:2)
+App 664193 output:     at Object.<anonymous> (/opt/cpanel/ea-ruby27/root/usr/share/passenger/helper-scripts/node-loader.js:133:1) {
+App 664193 output:   code: 'ERR_REQUIRE_ESM'
+App 664193 output: }
+App 664193 output: Node.js v18.20.8
+App 678306 output: /opt/cpanel/ea-ruby27/root/usr/share/passenger/helper-scripts/node-loader.js:80
+App 678306 output: 	return originalRequire.apply(this, arguments);
+App 678306 output:                         ^
+App 678306 output: Error [ERR_REQUIRE_ESM]: require() of ES Module /home/overfrag/overfrag_bot/index.js from /opt/cpanel/ea-ruby27/root/usr/share/passenger/helper-scripts/node-loader.js not supported.
+App 678306 output: Instead change the require of index.js in /opt/cpanel/ea-ruby27/root/usr/share/passenger/helper-scripts/node-loader.js to a dynamic import() which is available in all CommonJS modules.
+App 678306 output:     at Module.require (/opt/cpanel/ea-ruby27/root/usr/share/passenger/helper-scripts/node-loader.js:80:25)
+App 678306 output:     at loadApplication (/opt/cpanel/ea-ruby27/root/usr/share/passenger/helper-scripts/node-loader.js:243:2)
+App 678306 output:     at setupEnvironment (/opt/cpanel/ea-ruby27/root/usr/share/passenger/helper-scripts/node-loader.js:214:2)
+App 678306 output:     at Object.<anonymous> (/opt/cpanel/ea-ruby27/root/usr/share/passenger/helper-scripts/node-loader.js:133:1) {
+App 678306 output:   code: 'ERR_REQUIRE_ESM'
+App 678306 output: }
+App 678306 output: Node.js v18.20.8
+App 687245 output: /opt/cpanel/ea-ruby27/root/usr/share/passenger/helper-scripts/node-loader.js:80
+App 687245 output: 	return originalRequire.apply(this, arguments);
+App 687245 output:                         ^
+App 687245 output: Error [ERR_REQUIRE_ESM]: require() of ES Module /home/overfrag/overfrag_bot/index.js from /opt/cpanel/ea-ruby27/root/usr/share/passenger/helper-scripts/node-loader.js not supported.
+App 687245 output: Instead change the require of index.js in /opt/cpanel/ea-ruby27/root/usr/share/passenger/helper-scripts/node-loader.js to a dynamic import() which is available in all CommonJS modules.
+App 687245 output:     at Module.require (/opt/cpanel/ea-ruby27/root/usr/share/passenger/helper-scripts/node-loader.js:80:25)
+App 687245 output:     at loadApplication (/opt/cpanel/ea-ruby27/root/usr/share/passenger/helper-scripts/node-loader.js:243:2)
+App 687245 output:     at setupEnvironment (/opt/cpanel/ea-ruby27/root/usr/share/passenger/helper-scripts/node-loader.js:214:2)
+App 687245 output:     at Object.<anonymous> (/opt/cpanel/ea-ruby27/root/usr/share/passenger/helper-scripts/node-loader.js:133:1) {
+App 687245 output:   code: 'ERR_REQUIRE_ESM'
+App 687245 output: }
+App 687245 output: Node.js v18.20.8
+App 690456 output: /opt/cpanel/ea-ruby27/root/usr/share/passenger/helper-scripts/node-loader.js:80
+App 690456 output: 	return originalRequire.apply(this, arguments);
+App 690456 output:                         ^
+App 690456 output: Error [ERR_REQUIRE_ESM]: require() of ES Module /home/overfrag/overfrag_bot/app.js from /opt/cpanel/ea-ruby27/root/usr/share/passenger/helper-scripts/node-loader.js not supported.
+App 690456 output: app.js is treated as an ES module file as it is a .js file whose nearest parent package.json contains "type": "module" which declares all .js files in that package scope as ES modules.
+App 690456 output: Instead either rename app.js to end in .cjs, change the requiring code to use dynamic import() which is available in all CommonJS modules, or change "type": "module" to "type": "commonjs" in /home/overfrag/overfrag_bot/package.json to treat all .js files as CommonJS (using .mjs for all ES modules instead).
+App 690456 output:     at Module.require (/opt/cpanel/ea-ruby27/root/usr/share/passenger/helper-scripts/node-loader.js:80:25)
+App 690456 output:     at loadApplication (/opt/cpanel/ea-ruby27/root/usr/share/passenger/helper-scripts/node-loader.js:243:2)
+App 690456 output:     at setupEnvironment (/opt/cpanel/ea-ruby27/root/usr/share/passenger/helper-scripts/node-loader.js:214:2)
+App 690456 output:     at Object.<anonymous> (/opt/cpanel/ea-ruby27/root/usr/share/passenger/helper-scripts/node-loader.js:133:1) {
+App 690456 output:   code: 'ERR_REQUIRE_ESM'
+App 690456 output: }
+App 690456 output: Node.js v18.20.8
