@@ -53,13 +53,24 @@ if (fs.existsSync(envPath)) {
 // ============================================
 const CONFIG = {
     TOKEN: process.env.DISCORD_BOT_TOKEN || process.env.DISCORD_TOKEN,
-    GUILD_ID: process.env.DISCORD_GUILD_ID,
+    GUILD_ID: process.env.DISCORD_GUILD_ID || '1260254650964119716',
+    CLIENT_ID: process.env.DISCORD_CLIENT_ID || '1467003985100538061',
     CHANNELS: {
         WELCOME: process.env.DISCORD_CHANNEL_WELCOME,
         NEWS: process.env.DISCORD_CHANNEL_NEWS,
         JOIN_TO_CREATE: process.env.DISCORD_CHANNEL_JOIN_TO_CREATE
     }
 };
+
+// Helper: get main OVERFRAG guild (for admin API and admin-only features)
+function getMainGuild() {
+    return client.guilds?.cache.get(CONFIG.GUILD_ID) || null;
+}
+
+// Helper: get any guild by ID
+function getGuildById(id) {
+    return client.guilds?.cache.get(id) || null;
+}
 
 log(`Token presente: ${CONFIG.TOKEN ? 'SIM' : 'NÃO'}`);
 log(`Guild ID: ${CONFIG.GUILD_ID || 'não definido'}`);
@@ -291,8 +302,20 @@ client.once('ready', async () => {
         const { Routes } = require('discord-api-types/v9');
         const rest = new REST({ version: '9' }).setToken(CONFIG.TOKEN);
         const commands = require('./deploy-commands-data');
+
+        // 1) Register GLOBAL commands (all servers)
         await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
         log(`✅ ${commands.length} comandos globais registados`);
+
+        // 2) Clear OLD guild-specific commands (they override global and block other servers)
+        if (CONFIG.GUILD_ID) {
+            try {
+                await rest.put(Routes.applicationGuildCommands(client.user.id, CONFIG.GUILD_ID), { body: [] });
+                log(`✅ Comandos guild-specific limpos do servidor ${CONFIG.GUILD_ID}`);
+            } catch (e) {
+                logError('Falha ao limpar guild commands (não-fatal)', e);
+            }
+        }
     } catch (err) {
         logError('Falha ao registar comandos globais (não-fatal)', err);
     }
@@ -555,7 +578,7 @@ async function updateServerStats(guild) {
 // Update stats every 10 minutes
 let statsInterval = null;
 client.once('ready', () => {
-    const guild = client.guilds?.cache.first();
+    const guild = getMainGuild();
     if (guild && serverStatsConfig.enabled) {
         // Find existing stats channels by name pattern
         for (const [key, conf] of Object.entries(serverStatsConfig.channels)) {
@@ -571,7 +594,7 @@ client.once('ready', () => {
     }
 
     statsInterval = setInterval(() => {
-        const g = client.guilds?.cache.first();
+        const g = getMainGuild();
         if (g) updateServerStats(g);
     }, 10 * 60 * 1000); // 10 min
 });
@@ -1810,9 +1833,28 @@ function jsonResponse(res, status, data) {
     res.end(JSON.stringify(data));
 }
 
+// Helper: parse URL query params
+function getQueryParam(url, param) {
+    const match = url.match(new RegExp('[?&]' + param + '=([^&]+)'));
+    return match ? decodeURIComponent(match[1]) : null;
+}
+
+// Helper: get guild from request (?guild_id= query param, or default main guild)
+function getGuildFromReq(req) {
+    const guildId = getQueryParam(req.url, 'guild_id');
+    if (guildId) return getGuildById(guildId);
+    return getMainGuild();
+}
+
+// Helper: get URL path without query string
+function getUrlPath(url) {
+    return url.split('?')[0];
+}
+
 const server = http.createServer(async (req, res) => {
     log(`HTTP: ${req.method} ${req.url}`);
     setCors(res);
+    const urlPath = getUrlPath(req.url);
 
     // CORS preflight
     if (req.method === 'OPTIONS') {
@@ -1823,7 +1865,7 @@ const server = http.createServer(async (req, res) => {
     
     // ---- PUBLIC ENDPOINTS ----
     
-    if (req.url === '/' || req.url === '/health') {
+    if (urlPath === '/' || urlPath === '/health') {
         return jsonResponse(res, 200, {
             status: 'ok',
             bot: isConnected ? 'online' : 'offline',
@@ -1832,8 +1874,8 @@ const server = http.createServer(async (req, res) => {
         });
     }
     
-    if (req.url === '/status') {
-        const guild = client.guilds?.cache.first();
+    if (urlPath === '/status') {
+        const guild = getMainGuild();
         return jsonResponse(res, 200, {
             success: true,
             data: {
@@ -1848,7 +1890,7 @@ const server = http.createServer(async (req, res) => {
         });
     }
 
-    if (req.url === '/check') {
+    if (urlPath === '/check') {
         let logContent = 'Log não disponível';
         try {
             if (fs.existsSync(logFile)) {
@@ -1884,15 +1926,31 @@ const server = http.createServer(async (req, res) => {
 
     // ---- AUTHENTICATED ENDPOINTS (require BOT_API_SECRET) ----
 
-    if (!checkAuth(req) && req.url !== '/' && req.url !== '/health' && req.url !== '/status' && req.url !== '/check') {
+    if (!checkAuth(req) && urlPath !== '/' && urlPath !== '/health' && urlPath !== '/status' && urlPath !== '/check') {
         return jsonResponse(res, 401, { error: 'Unauthorized', message: 'Invalid BOT_API_SECRET' });
     }
-    
-    // GET /api/channels - Lista de canais do servidor
-    if (req.url === '/api/channels' && req.method === 'GET') {
+
+    // GET /api/guilds - Lista de servidores onde o bot está instalado
+    if (urlPath === '/api/guilds' && req.method === 'GET') {
         try {
-            const guild = client.guilds?.cache.first();
-            if (!guild) return jsonResponse(res, 503, { error: 'Bot not in any guild' });
+            const guilds = client.guilds?.cache.map(g => ({
+                id: g.id,
+                name: g.name,
+                icon: g.iconURL({ dynamic: true, size: 128 }),
+                memberCount: g.memberCount,
+                isMain: g.id === CONFIG.GUILD_ID
+            })) || [];
+            return jsonResponse(res, 200, { success: true, data: guilds });
+        } catch (err) {
+            return jsonResponse(res, 500, { error: err.message });
+        }
+    }
+    
+    // GET /api/channels - Lista de canais do servidor (?guild_id= opcional)
+    if (urlPath === '/api/channels' && req.method === 'GET') {
+        try {
+            const guild = getGuildFromReq(req);
+            if (!guild) return jsonResponse(res, 503, { error: 'Guild not found or bot not in guild' });
             
             const channels = guild.channels.cache
                 .filter(c => c.type === 'GUILD_TEXT' || c.type === 'GUILD_VOICE')
@@ -1906,9 +1964,9 @@ const server = http.createServer(async (req, res) => {
     }
 
     // GET /api/members - Contagem de membros
-    if (req.url === '/api/members' && req.method === 'GET') {
+    if (urlPath === '/api/members' && req.method === 'GET') {
         try {
-            const guild = client.guilds?.cache.first();
+            const guild = getGuildFromReq(req);
             return jsonResponse(res, 200, { 
                 success: true, 
                 data: { count: guild ? guild.memberCount : 0 } 
@@ -1919,13 +1977,13 @@ const server = http.createServer(async (req, res) => {
     }
 
     // POST /api/send-embed - Enviar embed para canal (full embed generator)
-    if (req.url === '/api/send-embed' && req.method === 'POST') {
+    if (urlPath === '/api/send-embed' && req.method === 'POST') {
         try {
             const body = await parseBody(req);
             const { channel_id, content, embed } = body;
             if (!channel_id) return jsonResponse(res, 400, { error: 'channel_id required' });
             
-            const guild = client.guilds?.cache.first();
+            const guild = getMainGuild();
             if (!guild) return jsonResponse(res, 503, { error: 'Bot not connected' });
             
             const channel = guild.channels.cache.get(channel_id);
@@ -1971,7 +2029,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     // GET /api/welcome-config - Obter welcome config actual do bot
-    if (req.url === '/api/welcome-config' && req.method === 'GET') {
+    if (urlPath === '/api/welcome-config' && req.method === 'GET') {
         return jsonResponse(res, 200, {
             success: true,
             data: {
@@ -1993,10 +2051,10 @@ const server = http.createServer(async (req, res) => {
     }
 
     // GET /api/roles - Lista de roles do servidor
-    if (req.url === '/api/roles' && req.method === 'GET') {
+    if (urlPath === '/api/roles' && req.method === 'GET') {
         try {
-            const guild = client.guilds?.cache.first();
-            if (!guild) return jsonResponse(res, 503, { error: 'Bot not in any guild' });
+            const guild = getGuildFromReq(req);
+            if (!guild) return jsonResponse(res, 503, { error: 'Guild not found or bot not in guild' });
             
             const roles = guild.roles.cache
                 .filter(r => r.id !== guild.id && !r.managed) // Exclude @everyone and bot roles
@@ -2010,12 +2068,12 @@ const server = http.createServer(async (req, res) => {
     }
 
     // GET /api/autorole - Obter configuração de autorole
-    if (req.url === '/api/autorole' && req.method === 'GET') {
+    if (urlPath === '/api/autorole' && req.method === 'GET') {
         return jsonResponse(res, 200, { success: true, data: autoroleConfig });
     }
 
     // PUT /api/autorole - Guardar configuração de autorole
-    if (req.url === '/api/autorole' && req.method === 'PUT') {
+    if (urlPath === '/api/autorole' && req.method === 'PUT') {
         try {
             const body = await parseBody(req);
             if (body.enabled !== undefined) autoroleConfig.enabled = body.enabled;
@@ -2031,12 +2089,12 @@ const server = http.createServer(async (req, res) => {
     }
 
     // GET /api/suggestions - Obter configuração de sugestões
-    if (req.url === '/api/suggestions' && req.method === 'GET') {
+    if (urlPath === '/api/suggestions' && req.method === 'GET') {
         return jsonResponse(res, 200, { success: true, data: suggestionConfig });
     }
 
     // PUT /api/suggestions - Guardar configuração de sugestões
-    if (req.url === '/api/suggestions' && req.method === 'PUT') {
+    if (urlPath === '/api/suggestions' && req.method === 'PUT') {
         try {
             const body = await parseBody(req);
             if (body.enabled !== undefined) suggestionConfig.enabled = body.enabled;
@@ -2051,12 +2109,12 @@ const server = http.createServer(async (req, res) => {
     }
 
     // GET /api/scheduled - Obter mensagens agendadas
-    if (req.url === '/api/scheduled' && req.method === 'GET') {
+    if (urlPath === '/api/scheduled' && req.method === 'GET') {
         return jsonResponse(res, 200, { success: true, data: scheduledMessages });
     }
 
     // POST /api/scheduled - Criar mensagem agendada
-    if (req.url === '/api/scheduled' && req.method === 'POST') {
+    if (urlPath === '/api/scheduled' && req.method === 'POST') {
         try {
             const body = await parseBody(req);
             const id = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
@@ -2099,7 +2157,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     // DELETE /api/scheduled/:id
-    const scheduledDeleteMatch = req.url.match(/^\/api\/scheduled\/(.+)$/);
+    const scheduledDeleteMatch = urlPath.match(/^\/api\/scheduled\/(.+)$/);
     if (scheduledDeleteMatch && req.method === 'DELETE') {
         const msgId = scheduledDeleteMatch[1];
         scheduledMessages = scheduledMessages.filter(m => m.id !== msgId);
@@ -2110,9 +2168,9 @@ const server = http.createServer(async (req, res) => {
     }
 
     // POST /api/test-welcome - Testar mensagem de boas-vindas
-    if (req.url === '/api/test-welcome' && req.method === 'POST') {
+    if (urlPath === '/api/test-welcome' && req.method === 'POST') {
         try {
-            const guild = client.guilds?.cache.first();
+            const guild = getMainGuild();
             if (!guild) return jsonResponse(res, 503, { error: 'Bot not connected' });
             
             const botMember = guild.members.cache.get(client.user.id);
@@ -2128,12 +2186,12 @@ const server = http.createServer(async (req, res) => {
     }
 
     // GET /api/tickets - Obter configuração de tickets
-    if (req.url === '/api/tickets' && req.method === 'GET') {
+    if (urlPath === '/api/tickets' && req.method === 'GET') {
         return jsonResponse(res, 200, { success: true, data: ticketConfig });
     }
 
     // PUT /api/tickets - Guardar configuração de tickets
-    if (req.url === '/api/tickets' && req.method === 'PUT') {
+    if (urlPath === '/api/tickets' && req.method === 'PUT') {
         try {
             const body = await parseBody(req);
             if (body.enabled !== undefined) ticketConfig.enabled = body.enabled;
@@ -2151,10 +2209,10 @@ const server = http.createServer(async (req, res) => {
     }
 
     // POST /api/tickets/deploy - Enviar embed de tickets para o canal
-    if (req.url === '/api/tickets/deploy' && req.method === 'POST') {
+    if (urlPath === '/api/tickets/deploy' && req.method === 'POST') {
         try {
             const body = await parseBody(req);
-            const guild = client.guilds?.cache.first();
+            const guild = getMainGuild();
             if (!guild) return jsonResponse(res, 503, { error: 'Bot not connected' });
 
             const channelId = body.channel_id || ticketConfig.channel_id;
@@ -2200,12 +2258,12 @@ const server = http.createServer(async (req, res) => {
     }
 
     // GET /api/leave - Obter configuração de leave
-    if (req.url === '/api/leave' && req.method === 'GET') {
+    if (urlPath === '/api/leave' && req.method === 'GET') {
         return jsonResponse(res, 200, { success: true, data: leaveConfig });
     }
 
     // PUT /api/leave - Guardar configuração de leave
-    if (req.url === '/api/leave' && req.method === 'PUT') {
+    if (urlPath === '/api/leave' && req.method === 'PUT') {
         try {
             const body = await parseBody(req);
             if (body.enabled !== undefined) leaveConfig.enabled = body.enabled;
@@ -2221,12 +2279,12 @@ const server = http.createServer(async (req, res) => {
     }
 
     // GET /api/serverstats - Obter configuração de server stats
-    if (req.url === '/api/serverstats' && req.method === 'GET') {
+    if (urlPath === '/api/serverstats' && req.method === 'GET') {
         return jsonResponse(res, 200, { success: true, data: serverStatsConfig });
     }
 
     // PUT /api/serverstats - Guardar configuração de server stats
-    if (req.url === '/api/serverstats' && req.method === 'PUT') {
+    if (urlPath === '/api/serverstats' && req.method === 'PUT') {
         try {
             const body = await parseBody(req);
             const wasEnabled = serverStatsConfig.enabled;
@@ -2244,13 +2302,13 @@ const server = http.createServer(async (req, res) => {
 
             // If just enabled, trigger update
             if (serverStatsConfig.enabled && !wasEnabled) {
-                const guild = client.guilds?.cache.first();
+                const guild = getMainGuild();
                 if (guild) updateServerStats(guild);
             }
 
             // If disabled, delete stats channels
             if (!serverStatsConfig.enabled && wasEnabled) {
-                const guild = client.guilds?.cache.first();
+                const guild = getMainGuild();
                 if (guild) {
                     for (const [key, chId] of statsChannelIds.entries()) {
                         try {
@@ -2333,7 +2391,7 @@ function setupScheduledMessages() {
             if (!cronMatches(msg.cron, now)) continue;
 
             try {
-                const guild = client.guilds?.cache.first();
+                const guild = getMainGuild();
                 if (!guild) continue;
                 const channel = guild.channels.cache.get(msg.channel_id);
                 if (!channel) continue;
