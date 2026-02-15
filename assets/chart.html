@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Faceit ELO Chart</title>
+  <link rel="stylesheet" href="./chart.css">
+  <!-- Chart.js CDN; when rendering server-side ensure network access or bundle locally -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <div class="page">
+    <div class="chart-wrapper" id="card">
+      <div class="header-row">
+        <div class="player-info">
+          <div class="avatar"><img id="avatar" src="" alt="avatar" width="64" height="64"></div>
+          <div class="meta">
+            <div class="player-name" id="playerName">Player</div>
+            <div class="player-sub" id="playerSub">CS2 • Elo • 🇵🇹</div>
+          </div>
+        </div>
+        <div class="stats-row">
+          <div class="stat"><div class="num" id="elo">0</div><div class="label">ELO</div></div>
+          <div class="stat"><div class="num" id="kd">0.00</div><div class="label">K/D</div></div>
+          <div class="stat"><div class="num" id="hs">0%</div><div class="label">HS%</div></div>
+        </div>
+      </div>
+
+      <div class="chart-area">
+        <canvas id="eloChart" width="760" height="260"></canvas>
+      </div>
+
+      <div class="legend">
+        <div class="item"><span class="swatch" style="background:linear-gradient(90deg,#ffd5a8,#ffb86b)"></span> ELO</div>
+        <div class="item"><span class="swatch" style="background:#6ee7b7"></span> Win %</div>
+      </div>
+
+      <div class="footer-row">
+        <div id="rangeText">Últimos 30 dias</div>
+        <div id="deltaText">+0 ELO</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Replace `window.DATA` server-side with a JSON object, for example:
+    // window.DATA = { name: 'MAD_OVF', avatar: '', elo: 2100, kd: 1.23, hs: 42, points: [{t: 1670000000000, v:2000}, ...] }
+    const DATA = window.DATA || {
+      name: 'Player#0000', avatar: '', elo: 2000, kd:1.05, hs:36, points: (()=>{const now=Date.now(); return Array.from({length:30}).map((_,i)=>({t: now - (29-i)*24*3600*1000, v:2000 + Math.round(Math.sin(i/5)*40)}))})()
+    };
+
+    document.getElementById('playerName').textContent = DATA.name || 'Player';
+    if(DATA.avatar) document.getElementById('avatar').src = DATA.avatar;
+    document.getElementById('elo').textContent = DATA.elo ?? '-';
+    document.getElementById('kd').textContent = (DATA.kd||0).toFixed(2);
+    document.getElementById('hs').textContent = (DATA.hs||0) + '%';
+
+    const ctx = document.getElementById('eloChart').getContext('2d');
+    const labels = DATA.points.map(p => new Date(p.t).toLocaleDateString());
+    const values = DATA.points.map(p => p.v);
+
+    // create gradient
+    const grad = ctx.createLinearGradient(0,0,0,260);
+    grad.addColorStop(0,'rgba(255,184,107,0.18)');
+    grad.addColorStop(1,'rgba(255,184,107,0)');
+
+    new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [{
+          label: 'ELO',
+          data: values,
+          borderColor: '#ffb86b',
+          backgroundColor: grad,
+          tension: 0.3,
+          pointRadius: 2,
+          borderWidth: 2,
+          fill: true
+        }]
+      },
+      options: {
+        responsive: false,
+        plugins: {legend:{display:false}, tooltip:{mode:'index',intersect:false}},
+        scales: {
+          x: {grid:{display:false}, ticks:{color:'#9fb0cc',maxRotation:0}},
+          y: {grid:{color:'rgba(255,255,255,0.04)'}, ticks:{color:'#9fb0cc'}}
+        }
+      }
+    });
+
+    // compute delta
+    const delta = values.length>1 ? values[values.length-1]-values[0] : 0;
+    const deltaEl = document.getElementById('deltaText');
+    deltaEl.textContent = (delta>=0?'+':'') + delta + ' ELO';
+    if(delta>=0) deltaEl.classList.add('delta-positive'); else deltaEl.classList.add('delta-negative');
+  </script>
+</body>
+</html>
