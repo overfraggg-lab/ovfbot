@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Smoke tests for OVERFRAG Bot
  * Run: node test/smoke.test.js
  * 
@@ -21,10 +21,10 @@ function test(name, fn) {
   try {
     fn();
     passed++;
-    console.log(`  ✅ ${name}`);
+    console.log(`  âœ… ${name}`);
   } catch (err) {
     failed++;
-    console.error(`  ❌ ${name}: ${err.message}`);
+    console.error(`  âŒ ${name}: ${err.message}`);
   }
 }
 
@@ -32,23 +32,23 @@ async function testAsync(name, fn) {
   try {
     await fn();
     passed++;
-    console.log(`  ✅ ${name}`);
+    console.log(`  âœ… ${name}`);
   } catch (err) {
     failed++;
-    console.error(`  ❌ ${name}: ${err.message}`);
+    console.error(`  âŒ ${name}: ${err.message}`);
   }
 }
 
 async function run() {
-  console.log('\n🧪 OVERFRAG Bot — Smoke Tests\n');
+  console.log('\nðŸ§ª OVERFRAG Bot â€” Smoke Tests\n');
 
   // ============================================
   // 1. Module imports
   // ============================================
-  console.log('📦 Module imports:');
+  console.log('ðŸ“¦ Module imports:');
 
   test('require cache module', () => {
-    const cache = require('../modules/cache');
+    const cache = require('../modules/cache.cjs');
     assert(cache.getCachedData, 'getCachedData must exist');
     assert(cache.updateCache, 'updateCache must exist');
     assert(cache.init, 'init must exist');
@@ -57,7 +57,7 @@ async function run() {
   });
 
   test('require logger module', () => {
-    const logger = require('../modules/logger');
+    const logger = require('../modules/logger.cjs');
     assert(logger.init, 'init must exist');
     assert(logger.getLogger, 'getLogger must exist');
     assert(logger.rotateLogs, 'rotateLogs must exist');
@@ -65,14 +65,14 @@ async function run() {
   });
 
   test('require rateLimiter module', () => {
-    const rl = require('../modules/rateLimiter');
+    const rl = require('../modules/rateLimiter.cjs');
     assert(rl.fetchWithRetry, 'fetchWithRetry must exist');
     assert(rl.fetchJSON, 'fetchJSON must exist');
     assert(rl.getStats, 'getStats must exist');
   });
 
   test('require crons module', () => {
-    const crons = require('../modules/crons');
+    const crons = require('../modules/crons.cjs');
     assert(crons.init, 'init must exist');
     assert(crons.register, 'register must exist');
     assert(crons.list, 'list must exist');
@@ -80,7 +80,7 @@ async function run() {
   });
 
   test('require state module', () => {
-    const state = require('../state');
+    const state = require('../state.cjs');
     assert(state.init, 'init must exist');
     assert(state.saveState, 'saveState must exist');
     assert(state.loadState, 'loadState must exist');
@@ -90,30 +90,30 @@ async function run() {
   test('app.js syntax is valid', () => {
     // Just check the file can be parsed (don't execute it)
     const fs = require('fs');
-    const code = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
+    const code = fs.readFileSync(path.join(__dirname, '..', 'app.cjs'), 'utf8');
     // This will throw SyntaxError if invalid
     new Function(code);
   });
 
   test('deploy-commands.js file exists', () => {
     const fs = require('fs');
-    assert(fs.existsSync(path.join(__dirname, '..', 'deploy-commands.js')));
+    assert(fs.existsSync(path.join(__dirname, '..', 'deploy-commands.cjs')));
   });
 
   // ============================================
   // 2. Cache operations
   // ============================================
-  console.log('\n💾 Cache operations:');
+  console.log('\nðŸ’¾ Cache operations:');
 
   await testAsync('cache init (no Redis)', async () => {
-    const cache = require('../modules/cache');
-    await cache.init(); // no REDIS_URL — in-memory only
+    const cache = require('../modules/cache.cjs');
+    await cache.init(); // no REDIS_URL â€” in-memory only
     const s = cache.stats();
     assert.strictEqual(s.backend, 'memory');
   });
 
   await testAsync('cache set and get', async () => {
-    const cache = require('../modules/cache');
+    const cache = require('../modules/cache.cjs');
     let fetchCalled = 0;
     const data = await cache.getCachedData('test:key1', async () => {
       fetchCalled++;
@@ -132,7 +132,7 @@ async function run() {
   });
 
   await testAsync('cache invalidate', async () => {
-    const cache = require('../modules/cache');
+    const cache = require('../modules/cache.cjs');
     await cache.updateCache('test:key2', { hello: 'world' }, 60);
     const before = await cache.getCachedData('test:key2', async () => ({ fallback: true }), 60);
     assert.deepStrictEqual(before, { hello: 'world' });
@@ -145,7 +145,7 @@ async function run() {
   });
 
   await testAsync('cache cleanup removes expired', async () => {
-    const cache = require('../modules/cache');
+    const cache = require('../modules/cache.cjs');
     // Insert with very short TTL
     await cache.updateCache('test:expired', { old: true }, 0); // 0 second TTL = already expired
     cache.cleanup();
@@ -156,23 +156,23 @@ async function run() {
   });
 
   await testAsync('cache close', async () => {
-    const cache = require('../modules/cache');
+    const cache = require('../modules/cache.cjs');
     await cache.close();
   });
 
   // ============================================
   // 3. Rate limiter
   // ============================================
-  console.log('\n🚦 Rate limiter:');
+  console.log('\nðŸš¦ Rate limiter:');
 
   test('rate limiter stats empty initially', () => {
-    const rl = require('../modules/rateLimiter');
+    const rl = require('../modules/rateLimiter.cjs');
     const stats = rl.getStats();
     assert(typeof stats === 'object');
   });
 
   test('rate limiter domain config exists', () => {
-    const rl = require('../modules/rateLimiter');
+    const rl = require('../modules/rateLimiter.cjs');
     assert(rl.DOMAIN_CONFIG.faceit);
     assert(rl.DOMAIN_CONFIG.twitch);
     assert(rl.DOMAIN_CONFIG.default);
@@ -181,10 +181,10 @@ async function run() {
   // ============================================
   // 4. Logger
   // ============================================
-  console.log('\n📝 Logger:');
+  console.log('\nðŸ“ Logger:');
 
   test('logger init returns logger instance', () => {
-    const loggerMod = require('../modules/logger');
+    const loggerMod = require('../modules/logger.cjs');
     const l = loggerMod.init();
     assert(l.info, 'Logger must have info method');
     assert(l.error, 'Logger must have error method');
@@ -193,7 +193,7 @@ async function run() {
   });
 
   test('logger child works', () => {
-    const loggerMod = require('../modules/logger');
+    const loggerMod = require('../modules/logger.cjs');
     const l = loggerMod.getLogger();
     const child = l.child({ module: 'test' });
     assert(child.info);
@@ -203,10 +203,10 @@ async function run() {
   // ============================================
   // 5. Crons
   // ============================================
-  console.log('\n⏰ Crons:');
+  console.log('\nâ° Crons:');
 
   test('cron register and list', () => {
-    const crons = require('../modules/crons');
+    const crons = require('../modules/crons.cjs');
     crons.setLogger(() => {}); // suppress logs
     crons.register('test-job', () => {}, 60000);
     const jobs = crons.list();
@@ -218,16 +218,16 @@ async function run() {
   // ============================================
   // 6. State
   // ============================================
-  console.log('\n💿 State:');
+  console.log('\nðŸ’¿ State:');
 
   await testAsync('state init (no Redis, LevelDB or file)', async () => {
-    const state = require('../state');
+    const state = require('../state.cjs');
     await state.init();
     // Should not crash
   });
 
   await testAsync('state save and load', async () => {
-    const state = require('../state');
+    const state = require('../state.cjs');
     await state.saveState({ test: true, value: 123 });
     const loaded = await state.loadState();
     assert.strictEqual(loaded.test, true);
@@ -239,7 +239,7 @@ async function run() {
   // Summary
   // ============================================
   console.log(`\n${'='.repeat(40)}`);
-  console.log(`  Total: ${passed + failed} | ✅ ${passed} passed | ❌ ${failed} failed`);
+  console.log(`  Total: ${passed + failed} | âœ… ${passed} passed | âŒ ${failed} failed`);
   console.log(`${'='.repeat(40)}\n`);
 
   process.exit(failed > 0 ? 1 : 0);

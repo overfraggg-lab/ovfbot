@@ -2,12 +2,13 @@
   "name": "overfrag-discord-bot",
   "version": "4.0.0",
   "description": "OVERFRAG Discord Bot - App separada",
-  "main": "app.js",
+  "type": "module",
+  "main": "index.js",
   "scripts": {
-    "start": "node app.js",
-    "dev": "node --watch app.js",
-    "deploy": "node deploy-commands.js",
-    "test": "node test/smoke.test.js"
+    "start": "node index.js",
+    "dev": "node --watch index.js",
+    "deploy": "node deploy-commands.cjs",
+    "test": "node test/smoke.test.cjs"
   },
   "dependencies": {
     "@discordjs/rest": "^1.7.1",

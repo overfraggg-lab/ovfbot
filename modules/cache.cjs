@@ -8,7 +8,7 @@
  *   const data = await cache.getCachedData('faceit:player:mutiris', () => fetchFaceitPlayer('mutiris'), 300);
  */
 
-const state = require('../state');
+const state = require('../state.cjs');
 
 // In-memory store: { key: { data, expiresAt } }
 const memoryCache = new Map();

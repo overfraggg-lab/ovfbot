@@ -7,17 +7,17 @@ const http = require('http');
 const dotenv = require('dotenv');
 const path = require('path');
 const fs = require('fs');
-const state = require('./state');
+const state = require('./state.cjs');
 const fetch = require('node-fetch');
 const { Client, Intents, MessageEmbed, MessageActionRow, MessageButton, MessageSelectMenu } = require('discord.js');
 const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, VoiceConnectionStatus, entersState, getVoiceConnection } = require('@discordjs/voice');
 const play = require('play-dl');
 
 // New modules
-const cache = require('./modules/cache');
-const loggerModule = require('./modules/logger');
-const rateLimiter = require('./modules/rateLimiter');
-const crons = require('./modules/crons');
+const cache = require('./modules/cache.cjs');
+const loggerModule = require('./modules/logger.cjs');
+const rateLimiter = require('./modules/rateLimiter.cjs');
+const crons = require('./modules/crons.cjs');
 
 // ============================================
 // LOGGING (async via pino with fallback)
@@ -301,7 +301,7 @@ client.once('ready', async () => {
         const { REST } = require('@discordjs/rest');
         const { Routes } = require('discord-api-types/v9');
         const rest = new REST({ version: '9' }).setToken(CONFIG.TOKEN);
-        const commands = require('./deploy-commands-data');
+        const commands = require('./deploy-commands-data.cjs');
 
         // 1) Register GLOBAL commands (all servers)
         await rest.put(Routes.applicationCommands(client.user.id), { body: commands });

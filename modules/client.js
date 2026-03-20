@@ -21,7 +21,8 @@ export function createClient() {
             Intents.FLAGS.GUILD_MESSAGES,
             Intents.FLAGS.MESSAGE_CONTENT,
             Intents.FLAGS.GUILD_VOICE_STATES,
-            Intents.FLAGS.GUILD_MESSAGE_REACTIONS
+            Intents.FLAGS.GUILD_MESSAGE_REACTIONS,
+            Intents.FLAGS.GUILD_PRESENCES
         ],
         partials: ['MESSAGE', 'CHANNEL', 'REACTION']
     });

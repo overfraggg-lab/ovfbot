@@ -11,7 +11,7 @@ import { handlePlay, handleSkip, handleStop, handlePause, handleResume, handleQu
  * Handler principal de interações
  */
 export async function handleInteraction(interaction) {
-    if (!interaction.isChatInputCommand()) return;
+    if (!interaction.isCommand()) return;
     
     switch (interaction.commandName) {
         case 'faceit':

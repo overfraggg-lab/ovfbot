@@ -20,7 +20,7 @@ if (!TOKEN) {
 }
 
 // Definição dos comandos (módulo partilhado com app.js)
-const commands = require('./deploy-commands-data');
+const commands = require('./deploy-commands-data.cjs');
 
 const rest = new REST({ version: '9' }).setToken(TOKEN);
 
