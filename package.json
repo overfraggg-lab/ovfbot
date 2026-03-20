@@ -3,10 +3,10 @@
   "version": "4.0.0",
   "description": "OVERFRAG Discord Bot - App separada",
   "type": "module",
-  "main": "index.js",
+  "main": "app.cjs",
   "scripts": {
-    "start": "node index.js",
-    "dev": "node --watch index.js",
+    "start": "node app.cjs",
+    "dev": "node --watch app.cjs",
     "deploy": "node deploy-commands.cjs",
     "test": "node test/smoke.test.cjs"
   },
