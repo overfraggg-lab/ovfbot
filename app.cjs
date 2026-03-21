@@ -323,6 +323,17 @@ client.once('ready', async () => {
     }
 });
 
+// ============================================
+// GUILD JOIN/LEAVE EVENTS
+// ============================================
+client.on('guildCreate', guild => {
+    log(`📥 Bot adicionado ao servidor: ${guild.name} (${guild.id}) - ${guild.memberCount} membros`);
+});
+
+client.on('guildDelete', guild => {
+    log(`📤 Bot removido do servidor: ${guild.name} (${guild.id})`);
+});
+
 client.on('error', err => {
     logError('Erro do cliente Discord', err);
 });
@@ -369,8 +380,11 @@ const SOCIALS = {
 };
 
 client.on('guildMemberAdd', async member => {
-    // --- Autorole ---
-    if (autoroleConfig.enabled && autoroleConfig.roles.length > 0) {
+    // Only run autorole + welcome on the main OVERFRAG server
+    const isMainGuild = member.guild.id === CONFIG.GUILD_ID;
+
+    // --- Autorole (main guild only) ---
+    if (isMainGuild && autoroleConfig.enabled && autoroleConfig.roles.length > 0) {
         const giveRoles = async () => {
             for (const roleInfo of autoroleConfig.roles) {
                 try {
@@ -402,8 +416,8 @@ client.on('guildMemberAdd', async member => {
         }
     }
 
-    // --- Welcome Message ---
-    if (!CONFIG.CHANNELS.WELCOME) return;
+    // --- Welcome Message (main guild only) ---
+    if (!isMainGuild || !CONFIG.CHANNELS.WELCOME) return;
 
     try {
         const channel = member.guild.channels.cache.get(CONFIG.CHANNELS.WELCOME);
@@ -475,6 +489,8 @@ client.on('guildMemberAdd', async member => {
 // LEAVE MESSAGE
 // ============================================
 client.on('guildMemberRemove', async member => {
+    // Leave messages only on main guild
+    if (member.guild.id !== CONFIG.GUILD_ID) return;
     if (!leaveConfig.enabled || !leaveConfig.channel_id) return;
 
     try {
