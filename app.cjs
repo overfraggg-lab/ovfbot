@@ -113,6 +113,7 @@ let welcomeConfig = {
     description: 'Olá {user}! Bem-vindo ao servidor da OVERFRAG, a casa do CS2 português!',
     show_thumbnail: true,
     show_banner: true,
+    banner_url: '',
     footer_text: 'OVERFRAG - A tua fonte de CS2',
     blocks: [
         { title: '🏆 CS2 Português', value: 'A maior comunidade de CS2 em Portugal\n➜ {channel:noticias}', inline: true },
@@ -169,6 +170,32 @@ let leaveConfig = {
     show_member_count: true
 };
 
+let generalConfig = {
+    language: 'pt-PT',
+    timezone: 'Europe/Lisbon',
+    embed_color: '#5865f2',
+    modules: {
+        welcome: true,
+        leave: true,
+        autoroles: true,
+        suggestions: true,
+    }
+};
+
+let teamFeedConfig = {
+    enabled: false,
+    team_name: '',
+    upcoming_channel_id: '',
+    results_channel_id: '',
+    live_channel_id: '',
+    news_channel_id: '',
+    send_upcoming: true,
+    send_results: true,
+    send_live: true,
+    send_match_stats: true,
+    send_news: false,
+};
+
 let serverStatsConfig = {
     enabled: false,
     category_id: '',
@@ -185,7 +212,9 @@ let guildScopedConfig = {
     welcome: {},
     autorole: {},
     suggestions: {},
-    leave: {}
+    leave: {},
+    general: {},
+    teamFeed: {},
 };
 
 // Track suggestion votes: { messageId: { up: Set<userId>, down: Set<userId> } }
@@ -219,6 +248,8 @@ function loadConfig() {
             if (data.scheduled) scheduledMessages = data.scheduled;
             if (data.tickets) ticketConfig = { ...ticketConfig, ...data.tickets };
             if (data.leave) leaveConfig = { ...leaveConfig, ...data.leave };
+            if (data.general) generalConfig = { ...generalConfig, ...data.general };
+            if (data.teamFeed) teamFeedConfig = { ...teamFeedConfig, ...data.teamFeed };
             if (data.serverStats) serverStatsConfig = { ...serverStatsConfig, ...data.serverStats };
             if (data.giveaways) activeGiveaways = data.giveaways;
             if (data.guildScoped) guildScopedConfig = {
@@ -226,6 +257,8 @@ function loadConfig() {
                 autorole: data.guildScoped.autorole || {},
                 suggestions: data.guildScoped.suggestions || {},
                 leave: data.guildScoped.leave || {},
+                general: data.guildScoped.general || {},
+                teamFeed: data.guildScoped.teamFeed || {},
             };
             log('Config carregada de bot_config.json');
         }
@@ -241,6 +274,8 @@ function saveConfig() {
             scheduled: scheduledMessages,
             tickets: ticketConfig,
             leave: leaveConfig,
+            general: generalConfig,
+            teamFeed: teamFeedConfig,
             serverStats: serverStatsConfig,
             giveaways: activeGiveaways,
             guildScoped: guildScopedConfig,
@@ -260,6 +295,8 @@ async function asyncPersistState() {
             scheduled: scheduledMessages,
             tickets: ticketConfig,
             leave: leaveConfig,
+            general: generalConfig,
+            teamFeed: teamFeedConfig,
             serverStats: serverStatsConfig,
             giveaways: activeGiveaways,
             guildScoped: guildScopedConfig,
@@ -323,6 +360,8 @@ loadConfig();
             if (persisted.scheduled) scheduledMessages = persisted.scheduled;
             if (persisted.tickets) ticketConfig = { ...ticketConfig, ...persisted.tickets };
             if (persisted.leave) leaveConfig = { ...leaveConfig, ...persisted.leave };
+            if (persisted.general) generalConfig = { ...generalConfig, ...persisted.general };
+            if (persisted.teamFeed) teamFeedConfig = { ...teamFeedConfig, ...persisted.teamFeed };
             if (persisted.serverStats) serverStatsConfig = { ...serverStatsConfig, ...persisted.serverStats };
             if (persisted.giveaways) activeGiveaways = persisted.giveaways;
             if (persisted.guildScoped) {
@@ -331,6 +370,8 @@ loadConfig();
                     autorole: persisted.guildScoped.autorole || guildScopedConfig.autorole || {},
                     suggestions: persisted.guildScoped.suggestions || guildScopedConfig.suggestions || {},
                     leave: persisted.guildScoped.leave || guildScopedConfig.leave || {},
+                    general: persisted.guildScoped.general || guildScopedConfig.general || {},
+                    teamFeed: persisted.guildScoped.teamFeed || guildScopedConfig.teamFeed || {},
                 };
             }
             // restore simple music queues (songs only)
@@ -547,8 +588,12 @@ client.on('guildMemberAdd', async member => {
             iconURL: files.some(f => f.name === 'logo.png') ? 'attachment://logo.png' : undefined,
         });
 
-        if (guildWelcomeConfig.show_banner !== false && files.some(f => f.name === 'banner.jpg')) {
-            embed.setImage('attachment://banner.jpg');
+        if (guildWelcomeConfig.show_banner !== false) {
+            if (guildWelcomeConfig.banner_url && /^https?:\/\//i.test(guildWelcomeConfig.banner_url)) {
+                embed.setImage(guildWelcomeConfig.banner_url);
+            } else if (files.some(f => f.name === 'banner.jpg')) {
+                embed.setImage('attachment://banner.jpg');
+            }
         }
 
         await channel.send({ embeds: [embed], files });
@@ -2072,8 +2117,8 @@ const server = http.createServer(async (req, res) => {
             if (!guild) return jsonResponse(res, 503, { error: 'Guild not found or bot not in guild' });
             
             const channels = guild.channels.cache
-                .filter(c => c.type === 'GUILD_TEXT' || c.type === 'GUILD_VOICE')
-                .map(c => ({ id: c.id, name: c.name, type: c.type === 'GUILD_TEXT' ? 'text' : 'voice', parent: c.parent?.name || null }))
+                .filter(c => ['GUILD_TEXT', 'GUILD_NEWS', 'GUILD_VOICE'].includes(c.type))
+                .map(c => ({ id: c.id, name: c.name, type: c.type === 'GUILD_VOICE' ? 'voice' : 'text', parent: c.parent?.name || null }))
                 .sort((a, b) => a.name.localeCompare(b.name));
             
             return jsonResponse(res, 200, { success: true, data: channels });
@@ -2089,8 +2134,8 @@ const server = http.createServer(async (req, res) => {
             if (!guild) return jsonResponse(res, 503, { error: 'Guild not found or bot not in guild' });
 
             const channels = guild.channels.cache
-                .filter(c => c.type === 'GUILD_TEXT' || c.type === 'GUILD_VOICE')
-                .map(c => ({ id: c.id, name: c.name, type: c.type === 'GUILD_TEXT' ? 'text' : 'voice', parent: c.parent?.name || null }))
+                .filter(c => ['GUILD_TEXT', 'GUILD_NEWS', 'GUILD_VOICE'].includes(c.type))
+                .map(c => ({ id: c.id, name: c.name, type: c.type === 'GUILD_VOICE' ? 'voice' : 'text', parent: c.parent?.name || null }))
                 .sort((a, b) => a.name.localeCompare(b.name));
 
             return jsonResponse(res, 200, { success: true, data: channels });
@@ -2492,6 +2537,74 @@ const server = http.createServer(async (req, res) => {
             setScopedConfig('leave', guildId, merged);
             saveConfig();
             log(`Leave config atualizada para guild ${guildId}`);
+            return jsonResponse(res, 200, { success: true, data: merged });
+        } catch (err) {
+            return jsonResponse(res, 500, { error: err.message });
+        }
+    }
+
+    if (urlPath === '/api/general' && req.method === 'GET') {
+        return jsonResponse(res, 200, { success: true, data: generalConfig });
+    }
+
+    const generalMatch = urlPath.match(/^\/api\/general\/(\d{17,20})$/);
+    if (generalMatch && req.method === 'GET') {
+        const guildId = generalMatch[1];
+        return jsonResponse(res, 200, { success: true, data: getScopedConfig('general', guildId, generalConfig) });
+    }
+
+    if (urlPath === '/api/general' && req.method === 'PUT') {
+        try {
+            const body = await parseBody(req);
+            generalConfig = { ...generalConfig, ...body };
+            saveConfig();
+            return jsonResponse(res, 200, { success: true, data: generalConfig });
+        } catch (err) {
+            return jsonResponse(res, 500, { error: err.message });
+        }
+    }
+
+    if (generalMatch && req.method === 'PUT') {
+        try {
+            const guildId = generalMatch[1];
+            const body = await parseBody(req);
+            const merged = { ...getScopedConfig('general', guildId, generalConfig), ...body };
+            setScopedConfig('general', guildId, merged);
+            saveConfig();
+            return jsonResponse(res, 200, { success: true, data: merged });
+        } catch (err) {
+            return jsonResponse(res, 500, { error: err.message });
+        }
+    }
+
+    if (urlPath === '/api/team-feed' && req.method === 'GET') {
+        return jsonResponse(res, 200, { success: true, data: teamFeedConfig });
+    }
+
+    const teamFeedMatch = urlPath.match(/^\/api\/team-feed\/(\d{17,20})$/);
+    if (teamFeedMatch && req.method === 'GET') {
+        const guildId = teamFeedMatch[1];
+        return jsonResponse(res, 200, { success: true, data: getScopedConfig('teamFeed', guildId, teamFeedConfig) });
+    }
+
+    if (urlPath === '/api/team-feed' && req.method === 'PUT') {
+        try {
+            const body = await parseBody(req);
+            teamFeedConfig = { ...teamFeedConfig, ...body };
+            saveConfig();
+            return jsonResponse(res, 200, { success: true, data: teamFeedConfig });
+        } catch (err) {
+            return jsonResponse(res, 500, { error: err.message });
+        }
+    }
+
+    if (teamFeedMatch && req.method === 'PUT') {
+        try {
+            const guildId = teamFeedMatch[1];
+            const body = await parseBody(req);
+            const merged = { ...getScopedConfig('teamFeed', guildId, teamFeedConfig), ...body };
+            setScopedConfig('teamFeed', guildId, merged);
+            saveConfig();
             return jsonResponse(res, 200, { success: true, data: merged });
         } catch (err) {
             return jsonResponse(res, 500, { error: err.message });
