@@ -2716,7 +2716,127 @@ function formatUptime(seconds) {
 }
 
 server.listen(PORT, () => {
-    log(`✅ HTTP Server na porta ${PORT} (Railway)`);
+    log(`✅ HTTP Server na porta ${PORT}`);
+});
+
+// ============================================
+// REVERSE PUSH — Sync guild data to site + poll config updates
+// ============================================
+const SITE_API_URL = (process.env.SITE_API_URL || 'https://overfrag.pt').replace(/\/+$/, '');
+const SYNC_ENDPOINT = `${SITE_API_URL}/backend/bot/public/internal/sync`;
+const POLL_ENDPOINT = `${SITE_API_URL}/backend/bot/public/internal/config-updates`;
+
+async function syncToSite() {
+    if (!client.user || !isConnected) return;
+    try {
+        const guilds = client.guilds.cache.map(g => ({
+            id: g.id, name: g.name,
+            icon: g.iconURL({ dynamic: true, size: 128 }),
+            memberCount: g.memberCount
+        }));
+
+        const guildData = {};
+        const configs = {};
+        for (const guild of client.guilds.cache.values()) {
+            guildData[guild.id] = {
+                channels: guild.channels.cache
+                    .filter(c => ['GUILD_TEXT','GUILD_NEWS','GUILD_VOICE','GUILD_CATEGORY'].includes(c.type))
+                    .map(c => ({
+                        id: c.id, name: c.name,
+                        type: c.type === 'GUILD_VOICE' ? 'voice' : c.type === 'GUILD_CATEGORY' ? 'category' : 'text',
+                        parent: c.parent?.name || null
+                    }))
+                    .sort((a, b) => a.name.localeCompare(b.name)),
+                roles: guild.roles.cache
+                    .filter(r => r.id !== guild.id && !r.managed)
+                    .map(r => ({ id: r.id, name: r.name, color: r.hexColor, position: r.position }))
+                    .sort((a, b) => b.position - a.position),
+                info: {
+                    id: guild.id, name: guild.name,
+                    icon: guild.iconURL({ dynamic: true, size: 128 }),
+                    memberCount: guild.memberCount
+                }
+            };
+            configs[guild.id] = {
+                welcome: getScopedConfig('welcome', guild.id, welcomeConfig),
+                leave: getScopedConfig('leave', guild.id, leaveConfig),
+                autorole: getScopedConfig('autorole', guild.id, autoroleConfig),
+                suggestions: getScopedConfig('suggestions', guild.id, suggestionConfig),
+                general: getScopedConfig('general', guild.id, generalConfig),
+                teamFeed: getScopedConfig('teamFeed', guild.id, teamFeedConfig),
+                serverStats: getScopedConfig('serverStats', guild.id, serverStatsConfig),
+            };
+        }
+
+        const res = await fetch(SYNC_ENDPOINT, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${BOT_API_SECRET}`
+            },
+            body: JSON.stringify({ guilds, guildData, configs }),
+            timeout: 15000
+        });
+
+        if (res.ok) {
+            log('✅ Sync com site concluído');
+        } else {
+            logError('Sync com site falhou', { status: res.status, text: await res.text().catch(() => '') });
+        }
+    } catch (err) {
+        logError('Erro ao sincronizar com site', err);
+    }
+}
+
+async function pollConfigUpdates() {
+    if (!client.user || !isConnected) return;
+    try {
+        const res = await fetch(POLL_ENDPOINT, {
+            headers: { 'Authorization': `Bearer ${BOT_API_SECRET}` },
+            timeout: 10000
+        });
+
+        if (!res.ok) return;
+        const { updates } = await res.json();
+        if (!Array.isArray(updates) || updates.length === 0) return;
+
+        for (const update of updates) {
+            const { guildId, section, data } = update;
+            if (!guildId || !section || !data) continue;
+
+            log(`📥 Config update recebido: ${section} para guild ${guildId}`);
+            setScopedConfig(section, guildId, data);
+
+            // Also update top-level config for main guild
+            if (guildId === CONFIG.GUILD_ID) {
+                switch (section) {
+                    case 'welcome': welcomeConfig = { ...welcomeConfig, ...data }; break;
+                    case 'leave': leaveConfig = { ...leaveConfig, ...data }; break;
+                    case 'autorole': autoroleConfig = { ...autoroleConfig, ...data }; break;
+                    case 'suggestions': suggestionConfig = { ...suggestionConfig, ...data }; break;
+                    case 'general': generalConfig = { ...generalConfig, ...data }; break;
+                    case 'teamFeed': teamFeedConfig = { ...teamFeedConfig, ...data }; break;
+                    case 'serverStats': serverStatsConfig = { ...serverStatsConfig, ...data }; break;
+                }
+            }
+        }
+
+        saveConfig();
+        log(`✅ ${updates.length} config update(s) aplicados`);
+    } catch (err) {
+        logError('Erro ao poll config updates', err);
+    }
+}
+
+// Start sync + polling after bot connects
+client.once('ready', () => {
+    // Initial sync after 5 seconds (let caches populate)
+    setTimeout(() => syncToSite(), 5000);
+    // Re-sync every 5 minutes
+    setInterval(() => syncToSite(), 5 * 60 * 1000);
+    // Poll for config updates every 30 seconds
+    setInterval(() => pollConfigUpdates(), 30 * 1000);
+    log('🔄 Reverse push: sync + poll timers iniciados');
 });
 
 // ============================================
