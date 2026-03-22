@@ -95,45 +95,27 @@ let autoroleConfig = {
     delay_seconds: 0
 };
 
-const SOCIALS = {
-    SITE: 'https://overfrag.pt',
-    INSTAGRAM: 'https://www.instagram.com/overfrag.pt/',
-    TWITTER: 'https://x.com/OVERFRAGG',
-    YOUTUBE: 'https://www.youtube.com/@OVERFRAGG',
-    TIKTOK: 'https://www.tiktok.com/@overfraggg',
-    FACEIT: 'https://www.faceit.com/pt/hub/f2e48fd3-4a12-4b5a-b498-0612a082bf78/OVERFRAG%20CS2%20Hub',
-};
+const SOCIALS = {};
 
 let welcomeConfig = {
     enabled: false,
     channel_id: CONFIG.CHANNELS.WELCOME || '',
     mention_user: true,
-    color: '#FF5500',
-    title: 'Bem-vindo à OVERFRAG!',
-    description: 'Olá {user}! Bem-vindo ao servidor da OVERFRAG, a casa do CS2 português!',
+    color: '#5865F2',
+    title: 'Bem-vindo ao {server}!',
+    description: 'Olá {user}! Bem-vindo ao servidor {server}!',
     show_thumbnail: true,
     show_banner: true,
     banner_url: '',
-    footer_text: 'OVERFRAG - A tua fonte de CS2',
+    footer_text: '',
     blocks: [
-        { title: '🏆 CS2 Português', value: 'A maior comunidade de CS2 em Portugal\n➜ {channel:noticias}', inline: true },
-        { title: '🌐 Redes Sociais', value: '[Site]({social:site}) · [Instagram]({social:instagram}) · [X/Twitter]({social:twitter})\n[YouTube]({social:youtube}) · [TikTok]({social:tiktok})', inline: true },
-        { title: '🔥 Jogar com Amigos', value: 'Junta-te ao nosso hub FACEIT!\n➜ {channel:faceit_club}', inline: true },
-        { title: '🎫 Precisas de ajuda?', value: 'Caso tenhas alguma dúvida ou problema, abre um\n➜ {channel:ticket}', inline: true },
+        { title: '', value: '', inline: true },
+        { title: '', value: '', inline: true },
+        { title: '', value: '', inline: true },
+        { title: '', value: '', inline: true },
     ],
-    channels: {
-        noticias: '',
-        faceit_club: '',
-        ticket: '',
-    },
-    socials: {
-        site: SOCIALS.SITE,
-        instagram: SOCIALS.INSTAGRAM,
-        twitter: SOCIALS.TWITTER,
-        youtube: SOCIALS.YOUTUBE,
-        tiktok: SOCIALS.TIKTOK,
-        faceit: SOCIALS.FACEIT,
-    },
+    channels: {},
+    socials: {},
 };
 
 let suggestionConfig = {
@@ -558,11 +540,12 @@ client.on('guildMemberAdd', async member => {
         if (!channel) return;
 
         // Assets
-        const bannerPath = path.join(__dirname, 'assets', 'banner.jpg');
         const logoPath   = path.join(__dirname, 'assets', 'logo.png');
+        const bannerPath = path.join(__dirname, 'assets', 'banner.jpg');
+        const hasBannerUrl = guildWelcomeConfig.banner_url && /^https?:\/\//i.test(guildWelcomeConfig.banner_url);
         const files = [];
 
-        if (fs.existsSync(bannerPath)) files.push({ attachment: bannerPath, name: 'banner.jpg' });
+        if (!hasBannerUrl && fs.existsSync(bannerPath)) files.push({ attachment: bannerPath, name: 'banner.jpg' });
         if (fs.existsSync(logoPath))   files.push({ attachment: logoPath,   name: 'logo.png' });
 
         const now = new Date();
@@ -591,7 +574,7 @@ client.on('guildMemberAdd', async member => {
         }
 
         embed.setFooter({
-            text: `${renderWelcomeText(guildWelcomeConfig.footer_text || 'OVERFRAG', member, guildWelcomeConfig)} • Hoje às ${hora}`,
+            text: `${renderWelcomeText(guildWelcomeConfig.footer_text || '', member, guildWelcomeConfig)} • Hoje às ${hora}`.replace(/^\s*•\s*/, ''),
             iconURL: files.some(f => f.name === 'logo.png') ? 'attachment://logo.png' : undefined,
         });
 
@@ -627,7 +610,7 @@ client.on('guildMemberRemove', async member => {
             .setAuthor({ name: member.user.tag, iconURL: member.user.displayAvatarURL({ dynamic: true }) })
             .setDescription(`**${member.user.tag}** ${guildLeaveConfig.message || 'saiu do servidor.'}`)
             .setThumbnail(member.user.displayAvatarURL({ dynamic: true, size: 128 }))
-            .setFooter({ text: guildLeaveConfig.show_member_count ? `Agora temos ${memberCount} membros` : 'OVERFRAG' })
+            .setFooter({ text: guildLeaveConfig.show_member_count ? `Agora temos ${memberCount} membros` : member.guild.name })
             .setTimestamp();
 
         await channel.send({ embeds: [embed] });
