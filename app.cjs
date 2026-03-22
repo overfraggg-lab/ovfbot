@@ -1426,6 +1426,34 @@ client.on('interactionCreate', async interaction => {
         );
 
         await interaction.reply({ embeds: [embed], components: [row] });
+    } else if (commandName === 'comandos') {
+        // ---- /comandos command ----
+        const cmdList = [
+            { cmd: '/faceit <nickname>', desc: 'Estatísticas FACEIT de um jogador' },
+            { cmd: '/play <query>', desc: 'Tocar música no canal de voz' },
+            { cmd: '/skip', desc: 'Saltar a música atual' },
+            { cmd: '/stop', desc: 'Parar a música e limpar fila' },
+            { cmd: '/pause', desc: 'Pausar a música' },
+            { cmd: '/resume', desc: 'Retomar a música pausada' },
+            { cmd: '/queue', desc: 'Ver a fila de músicas' },
+            { cmd: '/np', desc: 'Música atual' },
+            { cmd: '/suggest <texto>', desc: 'Enviar sugestão para o servidor' },
+            { cmd: '/giveaway create', desc: 'Criar um giveaway' },
+            { cmd: '/giveaway end', desc: 'Terminar um giveaway' },
+            { cmd: '/giveaway reroll', desc: 'Re-sortear vencedores' },
+            { cmd: '/clear <quantidade>', desc: 'Apagar mensagens de um canal' },
+            { cmd: '/info', desc: 'Informação sobre o bot' },
+            { cmd: '/ping', desc: 'Latência do bot' },
+            { cmd: '/site', desc: 'Link para o site' },
+            { cmd: '/comandos', desc: 'Lista de comandos' },
+        ];
+        const cmdEmbed = new MessageEmbed()
+            .setColor('#5865F2')
+            .setTitle('📋 Comandos Disponíveis')
+            .setDescription(cmdList.map(c => `\`${c.cmd}\` — ${c.desc}`).join('\n'))
+            .setFooter({ text: `${interaction.guild?.name || 'Bot'} • ${cmdList.length} comandos` })
+            .setTimestamp();
+        await interaction.reply({ embeds: [cmdEmbed] });
     }
 
     // ============================================
@@ -2151,10 +2179,10 @@ const server = http.createServer(async (req, res) => {
     if (urlPath === '/api/send-embed' && req.method === 'POST') {
         try {
             const body = await parseBody(req);
-            const { channel_id, content, embed } = body;
+            const { guild_id, channel_id, content, embed } = body;
             if (!channel_id) return jsonResponse(res, 400, { error: 'channel_id required' });
             
-            const guild = getMainGuild();
+            const guild = guild_id ? (client.guilds.cache.get(guild_id) || getMainGuild()) : getMainGuild();
             if (!guild) return jsonResponse(res, 503, { error: 'Bot not connected' });
             
             const channel = guild.channels.cache.get(channel_id);
@@ -2920,18 +2948,95 @@ async function checkTeamFeed() {
 
     for (const guild of client.guilds.cache.values()) {
         const cfg = getScopedConfig('teamFeed', guild.id, teamFeedConfig);
-        if (!cfg.enabled) continue;
+        if (!cfg.enabled || !cfg.team_name) continue;
 
         try {
-            // Fetch recent matches from site API
+            const teamQuery = encodeURIComponent(cfg.team_name);
+
+            // --- Upcoming games ---
+            if (cfg.send_upcoming && cfg.upcoming_channel_id) {
+                const upRes = await fetch(`${SITE_API_URL}/backend/jogos/proximos`, {
+                    signal: AbortSignal.timeout(10000)
+                }).catch(() => null);
+                if (upRes?.ok) {
+                    const upData = await upRes.json().catch(() => null);
+                    const items = upData?.items || (Array.isArray(upData) ? upData : []);
+                    const teamMatches = items.filter(m => {
+                        const t = cfg.team_name.toLowerCase();
+                        return (m.equipa1_nome || '').toLowerCase().includes(t) ||
+                               (m.equipa2_nome || '').toLowerCase().includes(t) ||
+                               (m.equipa1_sigla || '').toLowerCase() === t ||
+                               (m.equipa2_sigla || '').toLowerCase() === t;
+                    });
+                    for (const match of teamMatches.slice(0, 5)) {
+                        const feedKey = `upcoming:${guild.id}:${match.id}`;
+                        if (postedFeedItems.has(feedKey)) continue;
+                        postedFeedItems.add(feedKey);
+
+                        const channel = guild.channels.cache.get(cfg.upcoming_channel_id);
+                        if (!channel) continue;
+
+                        const dateStr = match.data_jogo ? new Date(match.data_jogo).toLocaleDateString('pt-PT', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+                        const embed = new MessageEmbed()
+                            .setColor('#3498db')
+                            .setTitle(`📅 ${match.equipa1_nome || 'TBD'} vs ${match.equipa2_nome || 'TBD'}`)
+                            .setDescription(`${match.torneio_nome ? `**${match.torneio_nome}**\n` : ''}${match.formato ? `Formato: ${match.formato}\n` : ''}${dateStr ? `📆 ${dateStr}` : ''}`)
+                            .setFooter({ text: 'Próximo jogo' })
+                            .setTimestamp();
+                        if (match.equipa1_logo) embed.setThumbnail(match.equipa1_logo);
+                        await channel.send({ embeds: [embed] }).catch(e => logError('Erro ao enviar próximo jogo', e));
+                    }
+                }
+            }
+
+            // --- Live games ---
+            if (cfg.send_live && cfg.live_channel_id) {
+                const liveRes = await fetch(`${SITE_API_URL}/backend/jogos/proximos`, {
+                    signal: AbortSignal.timeout(10000)
+                }).catch(() => null);
+                if (liveRes?.ok) {
+                    const liveData = await liveRes.json().catch(() => null);
+                    const items = liveData?.items || (Array.isArray(liveData) ? liveData : []);
+                    const liveMatches = items.filter(m => {
+                        const isLive = (m.estado || '').toLowerCase() === 'ao_vivo' || (m.estado || '').toLowerCase() === 'em_curso';
+                        if (!isLive) return false;
+                        const t = cfg.team_name.toLowerCase();
+                        return (m.equipa1_nome || '').toLowerCase().includes(t) ||
+                               (m.equipa2_nome || '').toLowerCase().includes(t);
+                    });
+                    for (const match of liveMatches) {
+                        const feedKey = `live:${guild.id}:${match.id}`;
+                        if (postedFeedItems.has(feedKey)) continue;
+                        postedFeedItems.add(feedKey);
+
+                        const channel = guild.channels.cache.get(cfg.live_channel_id);
+                        if (!channel) continue;
+
+                        const ld = match.live_data || {};
+                        const scoreInfo = ld.round_score ? `\n🔴 **Score:** ${ld.round_score}` : '';
+                        const mapInfo = ld.mapa_atual ? `\n🗺️ **Mapa:** ${ld.mapa_atual}${ld.mapa_numero ? ` (${ld.mapa_numero}/${ld.mapas_total || '?'})` : ''}` : '';
+
+                        const embed = new MessageEmbed()
+                            .setColor('#e74c3c')
+                            .setTitle(`🔴 AO VIVO: ${match.equipa1_nome || 'TBD'} vs ${match.equipa2_nome || 'TBD'}`)
+                            .setDescription(`${match.torneio_nome ? `**${match.torneio_nome}**\n` : ''}${scoreInfo}${mapInfo}${match.stream_url ? `\n📺 [Ver stream](${match.stream_url})` : ''}`)
+                            .setFooter({ text: 'Jogo ao vivo' })
+                            .setTimestamp();
+                        if (match.equipa1_logo) embed.setThumbnail(match.equipa1_logo);
+                        await channel.send({ embeds: [embed] }).catch(e => logError('Erro ao enviar jogo ao vivo', e));
+                    }
+                }
+            }
+
+            // --- Results ---
             if (cfg.send_results && cfg.results_channel_id) {
-                const matchRes = await fetch(`${SITE_API_URL}/backend/api/jogos?limit=5&status=finished`, {
+                const matchRes = await fetch(`${SITE_API_URL}/backend/jogos/resultados?equipa=${teamQuery}`, {
                     signal: AbortSignal.timeout(10000)
                 }).catch(() => null);
                 if (matchRes?.ok) {
                     const matchData = await matchRes.json().catch(() => null);
-                    const matches = matchData?.data || matchData?.jogos || (Array.isArray(matchData) ? matchData : []);
-                    for (const match of matches) {
+                    const matches = matchData?.items || matchData?.data || (Array.isArray(matchData) ? matchData : []);
+                    for (const match of matches.slice(0, 5)) {
                         const feedKey = `result:${guild.id}:${match.id}`;
                         if (postedFeedItems.has(feedKey)) continue;
                         postedFeedItems.add(feedKey);
@@ -2939,25 +3044,24 @@ async function checkTeamFeed() {
                         const channel = guild.channels.cache.get(cfg.results_channel_id);
                         if (!channel) continue;
 
-                        const team1 = match.team1_name || match.equipa1 || 'Equipa 1';
-                        const team2 = match.team2_name || match.equipa2 || 'Equipa 2';
-                        const score = match.score || match.resultado || `${match.team1_score || 0}-${match.team2_score || 0}`;
-                        const event = match.event_name || match.evento || '';
+                        const team1 = match.equipa1_nome || 'Equipa 1';
+                        const team2 = match.equipa2_nome || 'Equipa 2';
+                        const score = `${match.resultado_equipa1 ?? 0}-${match.resultado_equipa2 ?? 0}`;
+                        const event = match.torneio_nome || '';
 
                         const embed = new MessageEmbed()
-                            .setColor('#FF5500')
+                            .setColor('#2ecc71')
                             .setTitle(`🏆 ${team1} vs ${team2}`)
                             .setDescription(`**Resultado:** ${score}${event ? `\n**Evento:** ${event}` : ''}`)
-                            .setFooter({ text: 'OVERFRAG • Resultados' })
-                            .setTimestamp(match.data ? new Date(match.data) : new Date());
-
-                        if (match.team1_logo) embed.setThumbnail(match.team1_logo);
+                            .setFooter({ text: 'Resultado final' })
+                            .setTimestamp(match.data_jogo ? new Date(match.data_jogo) : new Date());
+                        if (match.equipa1_logo) embed.setThumbnail(match.equipa1_logo);
                         await channel.send({ embeds: [embed] }).catch(e => logError('Erro ao enviar resultado', e));
                     }
                 }
             }
 
-            // Fetch recent news from site API
+            // --- News ---
             if (cfg.send_news && cfg.news_channel_id) {
                 const newsRes = await fetch(`${SITE_API_URL}/backend/api/noticias?limit=3`, {
                     signal: AbortSignal.timeout(10000)
@@ -2983,12 +3087,9 @@ async function checkTeamFeed() {
                             .setTitle(`📰 ${title}`)
                             .setURL(url)
                             .setDescription(article.resumo || article.excerpt || article.descricao || '')
-                            .setFooter({ text: 'OVERFRAG • Notícias' })
+                            .setFooter({ text: 'Notícias' })
                             .setTimestamp(article.data_publicacao ? new Date(article.data_publicacao) : new Date());
-
-                        if (article.imagem || article.image_url) {
-                            embed.setImage(article.imagem || article.image_url);
-                        }
+                        if (article.imagem || article.image_url) embed.setImage(article.imagem || article.image_url);
                         await channel.send({ embeds: [embed] }).catch(e => logError('Erro ao enviar notícia', e));
                     }
                 }

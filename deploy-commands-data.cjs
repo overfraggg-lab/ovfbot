@@ -150,5 +150,9 @@ module.exports = [
                 ]
             }
         ]
+    },
+    {
+        name: 'comandos',
+        description: 'Lista todos os comandos disponíveis do bot'
     }
 ];
