@@ -53,7 +53,7 @@ if (fs.existsSync(envPath)) {
 // ============================================
 const CONFIG = {
     TOKEN: process.env.DISCORD_BOT_TOKEN || process.env.DISCORD_TOKEN,
-    GUILD_ID: process.env.DISCORD_GUILD_ID || '1260254650964119716',
+    GUILD_ID: process.env.DISCORD_GUILD_ID || '',
     CLIENT_ID: process.env.DISCORD_CLIENT_ID || '1467003985100538061',
     CHANNELS: {
         WELCOME: process.env.DISCORD_CHANNEL_WELCOME,
@@ -64,7 +64,11 @@ const CONFIG = {
 
 // Helper: get main OVERFRAG guild (for admin API and admin-only features)
 function getMainGuild() {
-    return client.guilds?.cache.get(CONFIG.GUILD_ID) || null;
+    if (CONFIG.GUILD_ID) {
+        const configuredGuild = client.guilds?.cache.get(CONFIG.GUILD_ID);
+        if (configuredGuild) return configuredGuild;
+    }
+    return client.guilds?.cache.first() || null;
 }
 
 // Helper: get any guild by ID
@@ -85,16 +89,10 @@ if (!CONFIG.TOKEN) {
 // CONFIGURABLE STATE (in-memory, updated via API)
 // ============================================
 let autoroleConfig = {
-    enabled: true,
-    roles: [{ id: '1401081780949356625', name: '🕹️ - COMUNIDADE - 🕹️' }],
+    enabled: false,
+    roles: [],
     require_message: false,
     delay_seconds: 0
-};
-
-const WELCOME_CHANNELS = {
-    TICKET: '1260254653749268572',
-    NOTICIAS: '1461833008418914569',
-    FACEIT_CLUB: '1466661867815698553',
 };
 
 const SOCIALS = {
@@ -107,7 +105,7 @@ const SOCIALS = {
 };
 
 let welcomeConfig = {
-    enabled: true,
+    enabled: false,
     channel_id: CONFIG.CHANNELS.WELCOME || '',
     mention_user: true,
     color: '#FF5500',
@@ -123,9 +121,9 @@ let welcomeConfig = {
         { title: '🎫 Precisas de ajuda?', value: 'Caso tenhas alguma dúvida ou problema, abre um\n➜ {channel:ticket}', inline: true },
     ],
     channels: {
-        noticias: WELCOME_CHANNELS.NOTICIAS,
-        faceit_club: WELCOME_CHANNELS.FACEIT_CLUB,
-        ticket: WELCOME_CHANNELS.TICKET,
+        noticias: '',
+        faceit_club: '',
+        ticket: '',
     },
     socials: {
         site: SOCIALS.SITE,
@@ -165,8 +163,8 @@ let ticketConfig = {
     }
 };
 let leaveConfig = {
-    enabled: true,
-    channel_id: '1260254652432126020',
+    enabled: false,
+    channel_id: '',
     message: 'saiu do servidor.',
     show_member_count: true
 };
@@ -1059,7 +1057,10 @@ client.on('interactionCreate', async interaction => {
             await reply.call(interaction, { content: '❌ Erro ao apagar mensagens: ' + err.message, ephemeral: true });
         }
     } else if (commandName === 'suggest') {
-        const guildSuggestionConfig = getScopedConfig('suggestions', interaction.guild?.id || CONFIG.GUILD_ID, suggestionConfig);
+        if (!interaction.guild?.id) {
+            return interaction.reply({ content: '❌ Este comando só pode ser usado dentro de um servidor.', ephemeral: true });
+        }
+        const guildSuggestionConfig = getScopedConfig('suggestions', interaction.guild.id, suggestionConfig);
         // ---- /suggest command ----
         if (!guildSuggestionConfig.enabled) {
             return interaction.reply({ content: '❌ O sistema de sugestões está desativado.', ephemeral: true });
