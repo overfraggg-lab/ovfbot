@@ -91,6 +91,52 @@ let autoroleConfig = {
     delay_seconds: 0
 };
 
+const WELCOME_CHANNELS = {
+    TICKET: '1260254653749268572',
+    NOTICIAS: '1461833008418914569',
+    FACEIT_CLUB: '1466661867815698553',
+};
+
+const SOCIALS = {
+    SITE: 'https://overfrag.pt',
+    INSTAGRAM: 'https://www.instagram.com/overfrag.pt/',
+    TWITTER: 'https://x.com/OVERFRAGG',
+    YOUTUBE: 'https://www.youtube.com/@OVERFRAGG',
+    TIKTOK: 'https://www.tiktok.com/@overfraggg',
+    FACEIT: 'https://www.faceit.com/pt/hub/f2e48fd3-4a12-4b5a-b498-0612a082bf78/OVERFRAG%20CS2%20Hub',
+};
+
+let welcomeConfig = {
+    enabled: true,
+    channel_id: CONFIG.CHANNELS.WELCOME || '',
+    mention_user: true,
+    color: '#FF5500',
+    title: 'Bem-vindo à OVERFRAG!',
+    description: 'Olá {user}! Bem-vindo ao servidor da OVERFRAG, a casa do CS2 português!',
+    show_thumbnail: true,
+    show_banner: true,
+    footer_text: 'OVERFRAG - A tua fonte de CS2',
+    blocks: [
+        { title: '🏆 CS2 Português', value: 'A maior comunidade de CS2 em Portugal\n➜ {channel:noticias}', inline: true },
+        { title: '🌐 Redes Sociais', value: '[Site]({social:site}) · [Instagram]({social:instagram}) · [X/Twitter]({social:twitter})\n[YouTube]({social:youtube}) · [TikTok]({social:tiktok})', inline: true },
+        { title: '🔥 Jogar com Amigos', value: 'Junta-te ao nosso hub FACEIT!\n➜ {channel:faceit_club}', inline: true },
+        { title: '🎫 Precisas de ajuda?', value: 'Caso tenhas alguma dúvida ou problema, abre um\n➜ {channel:ticket}', inline: true },
+    ],
+    channels: {
+        noticias: WELCOME_CHANNELS.NOTICIAS,
+        faceit_club: WELCOME_CHANNELS.FACEIT_CLUB,
+        ticket: WELCOME_CHANNELS.TICKET,
+    },
+    socials: {
+        site: SOCIALS.SITE,
+        instagram: SOCIALS.INSTAGRAM,
+        twitter: SOCIALS.TWITTER,
+        youtube: SOCIALS.YOUTUBE,
+        tiktok: SOCIALS.TIKTOK,
+        faceit: SOCIALS.FACEIT,
+    },
+};
+
 let suggestionConfig = {
     enabled: true,
     channel_id: '',
@@ -137,6 +183,13 @@ let serverStatsConfig = {
     }
 };
 
+let guildScopedConfig = {
+    welcome: {},
+    autorole: {},
+    suggestions: {},
+    leave: {}
+};
+
 // Track suggestion votes: { messageId: { up: Set<userId>, down: Set<userId> } }
 const suggestionVotes = new Map();
 
@@ -162,6 +215,7 @@ function loadConfig() {
     try {
         if (fs.existsSync(configFilePath)) {
             const data = JSON.parse(fs.readFileSync(configFilePath, 'utf8'));
+            if (data.welcome) welcomeConfig = { ...welcomeConfig, ...data.welcome };
             if (data.autorole) autoroleConfig = data.autorole;
             if (data.suggestions) suggestionConfig = data.suggestions;
             if (data.scheduled) scheduledMessages = data.scheduled;
@@ -169,6 +223,12 @@ function loadConfig() {
             if (data.leave) leaveConfig = { ...leaveConfig, ...data.leave };
             if (data.serverStats) serverStatsConfig = { ...serverStatsConfig, ...data.serverStats };
             if (data.giveaways) activeGiveaways = data.giveaways;
+            if (data.guildScoped) guildScopedConfig = {
+                welcome: data.guildScoped.welcome || {},
+                autorole: data.guildScoped.autorole || {},
+                suggestions: data.guildScoped.suggestions || {},
+                leave: data.guildScoped.leave || {},
+            };
             log('Config carregada de bot_config.json');
         }
     } catch (e) { logError('Erro ao carregar config', e); }
@@ -177,13 +237,15 @@ function saveConfig() {
     try {
         // write config file asynchronously (non-blocking)
         fs.promises.writeFile(configFilePath, JSON.stringify({
+            welcome: welcomeConfig,
             autorole: autoroleConfig,
             suggestions: suggestionConfig,
             scheduled: scheduledMessages,
             tickets: ticketConfig,
             leave: leaveConfig,
             serverStats: serverStatsConfig,
-            giveaways: activeGiveaways
+            giveaways: activeGiveaways,
+            guildScoped: guildScopedConfig,
         }, null, 2), 'utf8')
         .catch(e => logError('Erro ao guardar config (async)', e));
         // persist to Redis/LevelDB asynchronously
@@ -194,6 +256,7 @@ function saveConfig() {
 async function asyncPersistState() {
     try {
         await state.saveState({
+            welcome: welcomeConfig,
             autorole: autoroleConfig,
             suggestions: suggestionConfig,
             scheduled: scheduledMessages,
@@ -201,11 +264,43 @@ async function asyncPersistState() {
             leave: leaveConfig,
             serverStats: serverStatsConfig,
             giveaways: activeGiveaways,
+            guildScoped: guildScopedConfig,
             musicQueues: Array.from(musicQueues.entries()).map(([guildId, q]) => ({ guildId, songs: q.songs }))
         });
     } catch (e) {
         logError('Falha ao persistir estado (async)', e);
     }
+}
+
+function deepClone(obj) {
+    return JSON.parse(JSON.stringify(obj));
+}
+
+function getScopedConfig(section, guildId, fallback) {
+    const scoped = guildScopedConfig?.[section]?.[guildId];
+    if (!scoped) return deepClone(fallback);
+    return { ...deepClone(fallback), ...deepClone(scoped) };
+}
+
+function setScopedConfig(section, guildId, value) {
+    if (!guildScopedConfig[section]) guildScopedConfig[section] = {};
+    guildScopedConfig[section][guildId] = deepClone(value);
+}
+
+function renderWelcomeText(text, member, cfg) {
+    if (!text) return '';
+    const guildName = member.guild?.name || 'Servidor';
+    const userValue = cfg.mention_user ? `<@${member.id}>` : (member.user?.username || 'Membro');
+    const channels = cfg.channels || {};
+    const socials = cfg.socials || {};
+
+    return String(text)
+        .replace(/\{user\}/gi, userValue)
+        .replace(/\{server\}/gi, guildName)
+        .replace(/\{username\}/gi, member.user?.username || 'Membro')
+        .replace(/\{member_count\}/gi, String(member.guild?.memberCount || 0))
+        .replace(/\{channel:([a-z0-9_\-]+)\}/gi, (_, key) => channels[key] ? `<#${channels[key]}>` : '#canal')
+        .replace(/\{social:([a-z0-9_\-]+)\}/gi, (_, key) => socials[key] || '#');
 }
 loadConfig();
 
@@ -224,6 +319,7 @@ loadConfig();
         await state.init();
         const persisted = await state.loadState();
         if (persisted) {
+            if (persisted.welcome) welcomeConfig = { ...welcomeConfig, ...persisted.welcome };
             if (persisted.autorole) autoroleConfig = { ...autoroleConfig, ...persisted.autorole };
             if (persisted.suggestions) suggestionConfig = { ...suggestionConfig, ...persisted.suggestions };
             if (persisted.scheduled) scheduledMessages = persisted.scheduled;
@@ -231,6 +327,14 @@ loadConfig();
             if (persisted.leave) leaveConfig = { ...leaveConfig, ...persisted.leave };
             if (persisted.serverStats) serverStatsConfig = { ...serverStatsConfig, ...persisted.serverStats };
             if (persisted.giveaways) activeGiveaways = persisted.giveaways;
+            if (persisted.guildScoped) {
+                guildScopedConfig = {
+                    welcome: persisted.guildScoped.welcome || guildScopedConfig.welcome || {},
+                    autorole: persisted.guildScoped.autorole || guildScopedConfig.autorole || {},
+                    suggestions: persisted.guildScoped.suggestions || guildScopedConfig.suggestions || {},
+                    leave: persisted.guildScoped.leave || guildScopedConfig.leave || {},
+                };
+            }
             // restore simple music queues (songs only)
             if (persisted.musicQueues && Array.isArray(persisted.musicQueues)) {
                 for (const entry of persisted.musicQueues) {
@@ -362,31 +466,15 @@ client.on('shardError', (error, shardId) => {
 // ============================================
 // WELCOME MESSAGE + AUTOROLE
 // ============================================
-const WELCOME_CHANNELS = {
-    TICKET:      '1260254653749268572',
-    NOTICIAS:    '1461833008418914569',
-    FACEIT_CLUB: '1466661867815698553',
-};
-
-const AUTOROLE_ID = '1401081780949356625'; // @🕹️ - COMUNIDADE - 🕹️
-
-const SOCIALS = {
-    SITE:      'https://overfrag.pt',
-    INSTAGRAM: 'https://www.instagram.com/overfrag.pt/',
-    TWITTER:   'https://x.com/OVERFRAGG',
-    YOUTUBE:   'https://www.youtube.com/@OVERFRAGG',
-    TIKTOK:    'https://www.tiktok.com/@overfraggg',
-    FACEIT:    'https://www.faceit.com/pt/hub/f2e48fd3-4a12-4b5a-b498-0612a082bf78/OVERFRAG%20CS2%20Hub',
-};
-
 client.on('guildMemberAdd', async member => {
-    // Only run autorole + welcome on the main OVERFRAG server
-    const isMainGuild = member.guild.id === CONFIG.GUILD_ID;
+    const guildId = member.guild.id;
+    const guildAutoroleConfig = getScopedConfig('autorole', guildId, autoroleConfig);
+    const guildWelcomeConfig = getScopedConfig('welcome', guildId, welcomeConfig);
 
-    // --- Autorole (main guild only) ---
-    if (isMainGuild && autoroleConfig.enabled && autoroleConfig.roles.length > 0) {
+    // --- Autorole ---
+    if (guildAutoroleConfig.enabled && guildAutoroleConfig.roles.length > 0) {
         const giveRoles = async () => {
-            for (const roleInfo of autoroleConfig.roles) {
+            for (const roleInfo of guildAutoroleConfig.roles) {
                 try {
                     const role = member.guild.roles.cache.get(roleInfo.id);
                     if (role) {
@@ -401,26 +489,26 @@ client.on('guildMemberAdd', async member => {
             }
         };
 
-        if (autoroleConfig.require_message) {
+        if (guildAutoroleConfig.require_message) {
             // Store pending - will give roles when they send first message
-            pendingAutorole.set(member.id, {
-                roles: autoroleConfig.roles.map(r => r.id),
+            pendingAutorole.set(`${guildId}:${member.id}`, {
+                roles: guildAutoroleConfig.roles.map(r => r.id),
                 timestamp: Date.now()
             });
             log(`Autorole pendente (aguardar msg) para ${member.user.tag}`);
-        } else if (autoroleConfig.delay_seconds > 0) {
-            setTimeout(giveRoles, autoroleConfig.delay_seconds * 1000);
-            log(`Autorole com delay ${autoroleConfig.delay_seconds}s para ${member.user.tag}`);
+        } else if (guildAutoroleConfig.delay_seconds > 0) {
+            setTimeout(giveRoles, guildAutoroleConfig.delay_seconds * 1000);
+            log(`Autorole com delay ${guildAutoroleConfig.delay_seconds}s para ${member.user.tag}`);
         } else {
             await giveRoles();
         }
     }
 
-    // --- Welcome Message (main guild only) ---
-    if (!isMainGuild || !CONFIG.CHANNELS.WELCOME) return;
+    // --- Welcome Message ---
+    if (!guildWelcomeConfig.enabled || !guildWelcomeConfig.channel_id) return;
 
     try {
-        const channel = member.guild.channels.cache.get(CONFIG.CHANNELS.WELCOME);
+        const channel = member.guild.channels.cache.get(guildWelcomeConfig.channel_id);
         if (!channel) return;
 
         // Assets
@@ -435,46 +523,33 @@ client.on('guildMemberAdd', async member => {
         const hora = now.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' });
 
         const embed = new MessageEmbed()
-            .setColor('#FF5500')
-            .setTitle('Bem-vindo à OVERFRAG!')
-            .setDescription(
-                `Olá <@${member.id}>! Bem-vindo ao servidor da **OVERFRAG**, a casa do CS2 português!\n`
-            )
-            .setThumbnail(member.user.displayAvatarURL({ dynamic: true, size: 256 }))
-            .addFields(
-                {
-                    name: '🏆 CS2 Português',
-                    value: `A maior comunidade de CS2 em Portugal\n➜ <#${WELCOME_CHANNELS.NOTICIAS}>`,
-                    inline: true,
-                },
-                {
-                    name: '🌐 Redes Sociais',
-                    value: `[Site](${SOCIALS.SITE}) · [Instagram](${SOCIALS.INSTAGRAM}) · [X/Twitter](${SOCIALS.TWITTER})\n[YouTube](${SOCIALS.YOUTUBE}) · [TikTok](${SOCIALS.TIKTOK})`,
-                    inline: true,
-                },
-                {
-                    name: '\u200B',
-                    value: '\u200B',
-                    inline: false,
-                },
-                {
-                    name: '🔥 Jogar com Amigos',
-                    value: `Junta-te ao nosso hub FACEIT!\n➜ <#${WELCOME_CHANNELS.FACEIT_CLUB}>`,
-                    inline: true,
-                },
-                {
-                    name: '🎫 Precisas de ajuda?',
-                    value: `Caso tenhas alguma dúvida ou problema, abre um\n➜ <#${WELCOME_CHANNELS.TICKET}>`,
-                    inline: true,
-                }
-            )
-            .setFooter({
-                text: `OVERFRAG – A tua fonte de CS2 • Hoje às ${hora}`,
-                iconURL: files.some(f => f.name === 'logo.png') ? 'attachment://logo.png' : undefined,
-            });
+            .setColor(guildWelcomeConfig.color || '#FF5500')
+            .setTitle(renderWelcomeText(guildWelcomeConfig.title || 'Bem-vindo!', member, guildWelcomeConfig))
+            .setDescription(renderWelcomeText(guildWelcomeConfig.description || 'Bem-vindo ao servidor!', member, guildWelcomeConfig));
 
-        // Banner em baixo do embed (estilo Loritta)
-        if (files.some(f => f.name === 'banner.jpg')) {
+        if (guildWelcomeConfig.show_thumbnail !== false) {
+            embed.setThumbnail(member.user.displayAvatarURL({ dynamic: true, size: 256 }));
+        }
+
+        const blocks = Array.isArray(guildWelcomeConfig.blocks) ? guildWelcomeConfig.blocks.slice(0, 4) : [];
+        if (blocks.length > 0) {
+            embed.addFields(
+                ...blocks
+                    .filter(b => b?.title && b?.value)
+                    .map(b => ({
+                        name: renderWelcomeText(b.title, member, guildWelcomeConfig),
+                        value: renderWelcomeText(b.value, member, guildWelcomeConfig),
+                        inline: b.inline !== false,
+                    }))
+            );
+        }
+
+        embed.setFooter({
+            text: `${renderWelcomeText(guildWelcomeConfig.footer_text || 'OVERFRAG', member, guildWelcomeConfig)} • Hoje às ${hora}`,
+            iconURL: files.some(f => f.name === 'logo.png') ? 'attachment://logo.png' : undefined,
+        });
+
+        if (guildWelcomeConfig.show_banner !== false && files.some(f => f.name === 'banner.jpg')) {
             embed.setImage('attachment://banner.jpg');
         }
 
@@ -489,21 +564,20 @@ client.on('guildMemberAdd', async member => {
 // LEAVE MESSAGE
 // ============================================
 client.on('guildMemberRemove', async member => {
-    // Leave messages only on main guild
-    if (member.guild.id !== CONFIG.GUILD_ID) return;
-    if (!leaveConfig.enabled || !leaveConfig.channel_id) return;
+    const guildLeaveConfig = getScopedConfig('leave', member.guild.id, leaveConfig);
+    if (!guildLeaveConfig.enabled || !guildLeaveConfig.channel_id) return;
 
     try {
-        const channel = member.guild.channels.cache.get(leaveConfig.channel_id);
+        const channel = member.guild.channels.cache.get(guildLeaveConfig.channel_id);
         if (!channel) return;
 
         const memberCount = member.guild.memberCount;
         const embed = new MessageEmbed()
             .setColor('#f85149')
             .setAuthor({ name: member.user.tag, iconURL: member.user.displayAvatarURL({ dynamic: true }) })
-            .setDescription(`**${member.user.tag}** ${leaveConfig.message || 'saiu do servidor.'}`)
+            .setDescription(`**${member.user.tag}** ${guildLeaveConfig.message || 'saiu do servidor.'}`)
             .setThumbnail(member.user.displayAvatarURL({ dynamic: true, size: 128 }))
-            .setFooter({ text: leaveConfig.show_member_count ? `Agora temos ${memberCount} membros` : 'OVERFRAG' })
+            .setFooter({ text: guildLeaveConfig.show_member_count ? `Agora temos ${memberCount} membros` : 'OVERFRAG' })
             .setTimestamp();
 
         await channel.send({ embeds: [embed] });
@@ -669,6 +743,10 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
 // ============================================
 client.on('messageCreate', async message => {
     if (message.author.bot) return;
+    const guildId = message.guild?.id;
+    const guildSuggestionConfig = guildId
+        ? getScopedConfig('suggestions', guildId, suggestionConfig)
+        : suggestionConfig;
 
     // ---- ANTI-SPAM: detect same link in multiple channels within 1 minute ----
     const urlRegex = /https?:\/\/[^\s]+/gi;
@@ -721,7 +799,7 @@ client.on('messageCreate', async message => {
     }
 
     // Auto-delete non-bot messages in suggestions channel
-    if (suggestionConfig.enabled && suggestionConfig.channel_id && message.channel.id === suggestionConfig.channel_id) {
+    if (guildSuggestionConfig.enabled && guildSuggestionConfig.channel_id && message.channel.id === guildSuggestionConfig.channel_id) {
         try {
             await message.delete();
             log(`Auto-deleted message from ${message.author.tag} in suggestions channel`);
@@ -731,9 +809,10 @@ client.on('messageCreate', async message => {
         return;
     }
 
-    const pending = pendingAutorole.get(message.author.id);
+    const pendingKey = guildId ? `${guildId}:${message.author.id}` : message.author.id;
+    const pending = pendingAutorole.get(pendingKey);
     if (pending) {
-        pendingAutorole.delete(message.author.id);
+        pendingAutorole.delete(pendingKey);
         const member = message.member || await message.guild?.members.fetch(message.author.id).catch(() => null);
         if (member) {
             for (const roleId of pending.roles) {
@@ -980,11 +1059,12 @@ client.on('interactionCreate', async interaction => {
             await reply.call(interaction, { content: '❌ Erro ao apagar mensagens: ' + err.message, ephemeral: true });
         }
     } else if (commandName === 'suggest') {
+        const guildSuggestionConfig = getScopedConfig('suggestions', interaction.guild?.id || CONFIG.GUILD_ID, suggestionConfig);
         // ---- /suggest command ----
-        if (!suggestionConfig.enabled) {
+        if (!guildSuggestionConfig.enabled) {
             return interaction.reply({ content: '❌ O sistema de sugestões está desativado.', ephemeral: true });
         }
-        if (!suggestionConfig.channel_id) {
+        if (!guildSuggestionConfig.channel_id) {
             return interaction.reply({ content: '❌ O canal de sugestões não está configurado.', ephemeral: true });
         }
 
@@ -997,7 +1077,7 @@ client.on('interactionCreate', async interaction => {
             await interaction.deferReply({ ephemeral: true });
 
             const guild = interaction.guild;
-            const channel = guild.channels.cache.get(suggestionConfig.channel_id);
+            const channel = guild.channels.cache.get(guildSuggestionConfig.channel_id);
             if (!channel) {
                 return interaction.editReply('❌ Canal de sugestões não encontrado.');
             }
@@ -1029,7 +1109,7 @@ client.on('interactionCreate', async interaction => {
             suggestionVotes.set(msg.id, { up: new Set(), down: new Set() });
 
             // Create discussion thread if enabled
-            if (suggestionConfig.create_thread) {
+            if (guildSuggestionConfig.create_thread) {
                 try {
                     await msg.startThread({
                         name: `💬 ${suggestionText.substring(0, 90)}`,
@@ -1858,8 +1938,8 @@ function getQueryParam(url, param) {
 }
 
 // Helper: get guild from request (?guild_id= query param, or default main guild)
-function getGuildFromReq(req) {
-    const guildId = getQueryParam(req.url, 'guild_id');
+function getGuildFromReq(req, explicitGuildId) {
+    const guildId = explicitGuildId || getQueryParam(req.url, 'guild_id');
     if (guildId) return getGuildById(guildId);
     return getMainGuild();
 }
@@ -1963,6 +2043,26 @@ const server = http.createServer(async (req, res) => {
             return jsonResponse(res, 500, { error: err.message });
         }
     }
+
+    // GET /api/guild/:guildId/info - Dados do servidor
+    const guildInfoMatch = urlPath.match(/^\/api\/guild\/(\d{17,20})\/info$/);
+    if (guildInfoMatch && req.method === 'GET') {
+        try {
+            const guild = getGuildFromReq(req, guildInfoMatch[1]);
+            if (!guild) return jsonResponse(res, 404, { success: false, error: 'Guild not found' });
+            return jsonResponse(res, 200, {
+                success: true,
+                data: {
+                    id: guild.id,
+                    name: guild.name,
+                    icon: guild.iconURL({ dynamic: true, size: 128 }),
+                    memberCount: guild.memberCount,
+                }
+            });
+        } catch (err) {
+            return jsonResponse(res, 500, { success: false, error: err.message });
+        }
+    }
     
     // GET /api/channels - Lista de canais do servidor (?guild_id= opcional)
     if (urlPath === '/api/channels' && req.method === 'GET') {
@@ -1975,6 +2075,23 @@ const server = http.createServer(async (req, res) => {
                 .map(c => ({ id: c.id, name: c.name, type: c.type === 'GUILD_TEXT' ? 'text' : 'voice', parent: c.parent?.name || null }))
                 .sort((a, b) => a.name.localeCompare(b.name));
             
+            return jsonResponse(res, 200, { success: true, data: channels });
+        } catch (err) {
+            return jsonResponse(res, 500, { error: err.message });
+        }
+    }
+
+    const channelsMatch = urlPath.match(/^\/api\/channels\/(\d{17,20})$/);
+    if (channelsMatch && req.method === 'GET') {
+        try {
+            const guild = getGuildFromReq(req, channelsMatch[1]);
+            if (!guild) return jsonResponse(res, 503, { error: 'Guild not found or bot not in guild' });
+
+            const channels = guild.channels.cache
+                .filter(c => c.type === 'GUILD_TEXT' || c.type === 'GUILD_VOICE')
+                .map(c => ({ id: c.id, name: c.name, type: c.type === 'GUILD_TEXT' ? 'text' : 'voice', parent: c.parent?.name || null }))
+                .sort((a, b) => a.name.localeCompare(b.name));
+
             return jsonResponse(res, 200, { success: true, data: channels });
         } catch (err) {
             return jsonResponse(res, 500, { error: err.message });
@@ -2048,24 +2165,31 @@ const server = http.createServer(async (req, res) => {
 
     // GET /api/welcome-config - Obter welcome config actual do bot
     if (urlPath === '/api/welcome-config' && req.method === 'GET') {
+        const cfg = getScopedConfig('welcome', CONFIG.GUILD_ID, welcomeConfig);
         return jsonResponse(res, 200, {
             success: true,
-            data: {
-                enabled: true,
-                channels: WELCOME_CHANNELS,
-                socials: SOCIALS,
-                embed: {
-                    title: 'Bem-vindo à OVERFRAG!',
-                    color: '#FF5500',
-                    fields: [
-                        { name: '🏆 CS2 Português', value: 'A maior comunidade de CS2 em Portugal', channel_id: WELCOME_CHANNELS.NOTICIAS },
-                        { name: '🌐 Redes Sociais', value: 'Links das redes sociais', channel_id: '' },
-                        { name: '🔥 Jogar com Amigos', value: 'Junta-te ao nosso hub FACEIT!', channel_id: WELCOME_CHANNELS.FACEIT_CLUB },
-                        { name: '🎫 Precisas de ajuda?', value: 'Abre um ticket', channel_id: WELCOME_CHANNELS.TICKET }
-                    ]
-                }
-            }
+            data: cfg
         });
+    }
+
+    const welcomeMatch = urlPath.match(/^\/api\/welcome\/(\d{17,20})$/);
+    if (welcomeMatch && req.method === 'GET') {
+        const guildId = welcomeMatch[1];
+        return jsonResponse(res, 200, { success: true, data: getScopedConfig('welcome', guildId, welcomeConfig) });
+    }
+
+    if (welcomeMatch && req.method === 'PUT') {
+        try {
+            const guildId = welcomeMatch[1];
+            const body = await parseBody(req);
+            const merged = { ...getScopedConfig('welcome', guildId, welcomeConfig), ...body };
+            setScopedConfig('welcome', guildId, merged);
+            saveConfig();
+            log(`Welcome config atualizada para guild ${guildId}`);
+            return jsonResponse(res, 200, { success: true, data: merged });
+        } catch (err) {
+            return jsonResponse(res, 500, { error: err.message });
+        }
     }
 
     // GET /api/roles - Lista de roles do servidor
@@ -2085,9 +2209,32 @@ const server = http.createServer(async (req, res) => {
         }
     }
 
+    const rolesMatch = urlPath.match(/^\/api\/roles\/(\d{17,20})$/);
+    if (rolesMatch && req.method === 'GET') {
+        try {
+            const guild = getGuildFromReq(req, rolesMatch[1]);
+            if (!guild) return jsonResponse(res, 503, { error: 'Guild not found or bot not in guild' });
+
+            const roles = guild.roles.cache
+                .filter(r => r.id !== guild.id && !r.managed)
+                .map(r => ({ id: r.id, name: r.name, color: r.hexColor, position: r.position }))
+                .sort((a, b) => b.position - a.position);
+
+            return jsonResponse(res, 200, { success: true, data: roles });
+        } catch (err) {
+            return jsonResponse(res, 500, { error: err.message });
+        }
+    }
+
     // GET /api/autorole - Obter configuração de autorole
     if (urlPath === '/api/autorole' && req.method === 'GET') {
         return jsonResponse(res, 200, { success: true, data: autoroleConfig });
+    }
+
+    const autoroleMatch = urlPath.match(/^\/api\/autorole\/(\d{17,20})$/);
+    if (autoroleMatch && req.method === 'GET') {
+        const guildId = autoroleMatch[1];
+        return jsonResponse(res, 200, { success: true, data: getScopedConfig('autorole', guildId, autoroleConfig) });
     }
 
     // PUT /api/autorole - Guardar configuração de autorole
@@ -2106,9 +2253,29 @@ const server = http.createServer(async (req, res) => {
         }
     }
 
+    if (autoroleMatch && req.method === 'PUT') {
+        try {
+            const guildId = autoroleMatch[1];
+            const body = await parseBody(req);
+            const merged = { ...getScopedConfig('autorole', guildId, autoroleConfig), ...body };
+            setScopedConfig('autorole', guildId, merged);
+            saveConfig();
+            log(`Autorole config atualizada para guild ${guildId}`);
+            return jsonResponse(res, 200, { success: true, data: merged });
+        } catch (err) {
+            return jsonResponse(res, 500, { error: err.message });
+        }
+    }
+
     // GET /api/suggestions - Obter configuração de sugestões
     if (urlPath === '/api/suggestions' && req.method === 'GET') {
         return jsonResponse(res, 200, { success: true, data: suggestionConfig });
+    }
+
+    const suggestionsMatch = urlPath.match(/^\/api\/suggestions\/(\d{17,20})$/);
+    if (suggestionsMatch && req.method === 'GET') {
+        const guildId = suggestionsMatch[1];
+        return jsonResponse(res, 200, { success: true, data: getScopedConfig('suggestions', guildId, suggestionConfig) });
     }
 
     // PUT /api/suggestions - Guardar configuração de sugestões
@@ -2121,6 +2288,20 @@ const server = http.createServer(async (req, res) => {
             saveConfig();
             log(`Suggestion config atualizada via API: ${JSON.stringify(suggestionConfig)}`);
             return jsonResponse(res, 200, { success: true, message: 'Suggestion config saved' });
+        } catch (err) {
+            return jsonResponse(res, 500, { error: err.message });
+        }
+    }
+
+    if (suggestionsMatch && req.method === 'PUT') {
+        try {
+            const guildId = suggestionsMatch[1];
+            const body = await parseBody(req);
+            const merged = { ...getScopedConfig('suggestions', guildId, suggestionConfig), ...body };
+            setScopedConfig('suggestions', guildId, merged);
+            saveConfig();
+            log(`Suggestion config atualizada para guild ${guildId}`);
+            return jsonResponse(res, 200, { success: true, data: merged });
         } catch (err) {
             return jsonResponse(res, 500, { error: err.message });
         }
@@ -2280,6 +2461,12 @@ const server = http.createServer(async (req, res) => {
         return jsonResponse(res, 200, { success: true, data: leaveConfig });
     }
 
+    const leaveMatch = urlPath.match(/^\/api\/leave\/(\d{17,20})$/);
+    if (leaveMatch && req.method === 'GET') {
+        const guildId = leaveMatch[1];
+        return jsonResponse(res, 200, { success: true, data: getScopedConfig('leave', guildId, leaveConfig) });
+    }
+
     // PUT /api/leave - Guardar configuração de leave
     if (urlPath === '/api/leave' && req.method === 'PUT') {
         try {
@@ -2291,6 +2478,20 @@ const server = http.createServer(async (req, res) => {
             saveConfig();
             log(`Leave config atualizada via API: ${JSON.stringify(leaveConfig)}`);
             return jsonResponse(res, 200, { success: true, message: 'Leave config saved' });
+        } catch (err) {
+            return jsonResponse(res, 500, { error: err.message });
+        }
+    }
+
+    if (leaveMatch && req.method === 'PUT') {
+        try {
+            const guildId = leaveMatch[1];
+            const body = await parseBody(req);
+            const merged = { ...getScopedConfig('leave', guildId, leaveConfig), ...body };
+            setScopedConfig('leave', guildId, merged);
+            saveConfig();
+            log(`Leave config atualizada para guild ${guildId}`);
+            return jsonResponse(res, 200, { success: true, data: merged });
         } catch (err) {
             return jsonResponse(res, 500, { error: err.message });
         }
