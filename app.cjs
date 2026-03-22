@@ -217,6 +217,7 @@ let guildScopedConfig = {
     general: {},
     teamFeed: {},
     serverStats: {},
+    tickets: {},
 };
 
 // Track suggestion votes: { messageId: { up: Set<userId>, down: Set<userId> } }
@@ -262,6 +263,7 @@ function loadConfig() {
                 general: data.guildScoped.general || {},
                 teamFeed: data.guildScoped.teamFeed || {},
                 serverStats: data.guildScoped.serverStats || {},
+                tickets: data.guildScoped.tickets || {},
             };
             log('Config carregada de bot_config.json');
         }
@@ -376,6 +378,7 @@ loadConfig();
                     general: persisted.guildScoped.general || guildScopedConfig.general || {},
                     teamFeed: persisted.guildScoped.teamFeed || guildScopedConfig.teamFeed || {},
                     serverStats: persisted.guildScoped.serverStats || guildScopedConfig.serverStats || {},
+                    tickets: persisted.guildScoped.tickets || guildScopedConfig.tickets || {},
                 };
             }
             // restore simple music queues (songs only)
@@ -2765,6 +2768,7 @@ async function syncToSite() {
                 general: getScopedConfig('general', guild.id, generalConfig),
                 teamFeed: getScopedConfig('teamFeed', guild.id, teamFeedConfig),
                 serverStats: getScopedConfig('serverStats', guild.id, serverStatsConfig),
+                tickets: getScopedConfig('tickets', guild.id, ticketConfig),
             };
         }
 
@@ -2804,6 +2808,12 @@ async function pollConfigUpdates() {
             const { guildId, section, data } = update;
             if (!guildId || !section || !data) continue;
 
+            // Handle deploy actions
+            if (section === '__action:deploy-tickets') {
+                try { await deployTicketEmbed(guildId, data); } catch (e) { logError('Erro ao deploy tickets', e); }
+                continue;
+            }
+
             log(`📥 Config update recebido: ${section} para guild ${guildId}`);
             setScopedConfig(section, guildId, data);
 
@@ -2817,6 +2827,7 @@ async function pollConfigUpdates() {
                     case 'general': generalConfig = { ...generalConfig, ...data }; break;
                     case 'teamFeed': teamFeedConfig = { ...teamFeedConfig, ...data }; break;
                     case 'serverStats': serverStatsConfig = { ...serverStatsConfig, ...data }; break;
+                    case 'tickets': ticketConfig = { ...ticketConfig, ...data }; break;
                 }
             }
         }
@@ -2828,15 +2839,198 @@ async function pollConfigUpdates() {
     }
 }
 
+// Helper: deploy ticket embed to a channel (used by API + config-queue action)
+async function deployTicketEmbed(guildId, data) {
+    const guild = client.guilds.cache.get(guildId) || getMainGuild();
+    if (!guild) throw new Error('Guild not found');
+
+    const cfg = data || getScopedConfig('tickets', guildId, ticketConfig);
+    const channelId = cfg.channel_id || ticketConfig.channel_id;
+    if (!channelId) throw new Error('channel_id required');
+
+    const channel = guild.channels.cache.get(channelId);
+    if (!channel) throw new Error('Channel not found');
+
+    const embedData = cfg.embed || ticketConfig.embed;
+    const embed = new MessageEmbed()
+        .setColor(embedData.color || '#5865F2')
+        .setTitle(embedData.title || '🎫 Sistema de Tickets')
+        .setDescription(embedData.description || 'Seleciona a categoria do teu ticket no menu abaixo.');
+
+    const cats = cfg.categories || ticketConfig.categories;
+    const options = cats.filter(c => c.name).map(c => ({
+        label: c.name,
+        description: c.description || '',
+        value: c.id,
+        emoji: c.emoji || '📋'
+    }));
+
+    if (options.length === 0) throw new Error('At least one category required');
+
+    const row = new MessageActionRow().addComponents(
+        new MessageSelectMenu()
+            .setCustomId('ticket_category')
+            .setPlaceholder('Seleciona a categoria do ticket...')
+            .addOptions(options)
+    );
+
+    await channel.send({ embeds: [embed], components: [row] });
+    log(`Ticket embed deployed to #${channel.name} (guild ${guildId})`);
+}
+
+// Pull all configs from site MySQL on startup (recovers from state loss)
+const CONFIG_PULL_ENDPOINT = `${SITE_API_URL}/backend/bot/public/internal/config-pull`;
+
+async function pullConfigsFromSite() {
+    try {
+        const res = await fetch(CONFIG_PULL_ENDPOINT, {
+            headers: { 'Authorization': `Bearer ${BOT_API_SECRET}` },
+            timeout: 15000
+        });
+        if (!res.ok) { log('⚠️ Config-pull falhou: ' + res.status); return; }
+        const { configs } = await res.json();
+        if (!configs || typeof configs !== 'object') return;
+
+        let count = 0;
+        for (const [guildId, sections] of Object.entries(configs)) {
+            for (const [section, data] of Object.entries(sections)) {
+                if (!data) continue;
+                // Only apply if we don't already have a non-default guild-scoped config
+                const existing = guildScopedConfig?.[section]?.[guildId];
+                if (!existing || !existing.enabled) {
+                    setScopedConfig(section, guildId, data);
+                    count++;
+                }
+                // Also update top-level for main guild
+                if (guildId === CONFIG.GUILD_ID) {
+                    switch (section) {
+                        case 'welcome': if (!welcomeConfig.enabled) welcomeConfig = { ...welcomeConfig, ...data }; break;
+                        case 'leave': if (!leaveConfig.enabled) leaveConfig = { ...leaveConfig, ...data }; break;
+                        case 'autorole': if (!autoroleConfig.enabled) autoroleConfig = { ...autoroleConfig, ...data }; break;
+                        case 'suggestions': suggestionConfig = { ...suggestionConfig, ...data }; break;
+                        case 'general': generalConfig = { ...generalConfig, ...data }; break;
+                        case 'teamFeed': if (!teamFeedConfig.enabled) teamFeedConfig = { ...teamFeedConfig, ...data }; break;
+                        case 'serverStats': if (!serverStatsConfig.enabled) serverStatsConfig = { ...serverStatsConfig, ...data }; break;
+                        case 'tickets': ticketConfig = { ...ticketConfig, ...data }; break;
+                    }
+                }
+            }
+        }
+        if (count > 0) {
+            saveConfig();
+            log(`✅ Config-pull: ${count} configs recuperadas do site`);
+        } else {
+            log('Config-pull: nenhuma config nova no site');
+        }
+    } catch (err) {
+        logError('Erro no config-pull', err);
+    }
+}
+
+// ============================================
+// TEAM FEED — Post match results & news to Discord
+// ============================================
+const postedFeedItems = new Set(); // Track posted items to avoid duplicates
+
+async function checkTeamFeed() {
+    if (!client.user || !isConnected) return;
+
+    for (const guild of client.guilds.cache.values()) {
+        const cfg = getScopedConfig('teamFeed', guild.id, teamFeedConfig);
+        if (!cfg.enabled) continue;
+
+        try {
+            // Fetch recent matches from site API
+            if (cfg.send_results && cfg.results_channel_id) {
+                const matchRes = await fetch(`${SITE_API_URL}/backend/api/jogos?limit=5&status=finished`, {
+                    signal: AbortSignal.timeout(10000)
+                }).catch(() => null);
+                if (matchRes?.ok) {
+                    const matchData = await matchRes.json().catch(() => null);
+                    const matches = matchData?.data || matchData?.jogos || (Array.isArray(matchData) ? matchData : []);
+                    for (const match of matches) {
+                        const feedKey = `result:${guild.id}:${match.id}`;
+                        if (postedFeedItems.has(feedKey)) continue;
+                        postedFeedItems.add(feedKey);
+
+                        const channel = guild.channels.cache.get(cfg.results_channel_id);
+                        if (!channel) continue;
+
+                        const team1 = match.team1_name || match.equipa1 || 'Equipa 1';
+                        const team2 = match.team2_name || match.equipa2 || 'Equipa 2';
+                        const score = match.score || match.resultado || `${match.team1_score || 0}-${match.team2_score || 0}`;
+                        const event = match.event_name || match.evento || '';
+
+                        const embed = new MessageEmbed()
+                            .setColor('#FF5500')
+                            .setTitle(`🏆 ${team1} vs ${team2}`)
+                            .setDescription(`**Resultado:** ${score}${event ? `\n**Evento:** ${event}` : ''}`)
+                            .setFooter({ text: 'OVERFRAG • Resultados' })
+                            .setTimestamp(match.data ? new Date(match.data) : new Date());
+
+                        if (match.team1_logo) embed.setThumbnail(match.team1_logo);
+                        await channel.send({ embeds: [embed] }).catch(e => logError('Erro ao enviar resultado', e));
+                    }
+                }
+            }
+
+            // Fetch recent news from site API
+            if (cfg.send_news && cfg.news_channel_id) {
+                const newsRes = await fetch(`${SITE_API_URL}/backend/api/noticias?limit=3`, {
+                    signal: AbortSignal.timeout(10000)
+                }).catch(() => null);
+                if (newsRes?.ok) {
+                    const newsData = await newsRes.json().catch(() => null);
+                    const articles = newsData?.data || newsData?.noticias || (Array.isArray(newsData) ? newsData : []);
+                    for (const article of articles) {
+                        const feedKey = `news:${guild.id}:${article.id}`;
+                        if (postedFeedItems.has(feedKey)) continue;
+                        postedFeedItems.add(feedKey);
+
+                        const channel = guild.channels.cache.get(cfg.news_channel_id);
+                        if (!channel) continue;
+
+                        const title = article.titulo || article.title || 'Nova Notícia';
+                        const url = article.slug
+                            ? `${SITE_API_URL}/noticia/${article.slug}`
+                            : `${SITE_API_URL}/noticia/${article.id}`;
+
+                        const embed = new MessageEmbed()
+                            .setColor('#5865F2')
+                            .setTitle(`📰 ${title}`)
+                            .setURL(url)
+                            .setDescription(article.resumo || article.excerpt || article.descricao || '')
+                            .setFooter({ text: 'OVERFRAG • Notícias' })
+                            .setTimestamp(article.data_publicacao ? new Date(article.data_publicacao) : new Date());
+
+                        if (article.imagem || article.image_url) {
+                            embed.setImage(article.imagem || article.image_url);
+                        }
+                        await channel.send({ embeds: [embed] }).catch(e => logError('Erro ao enviar notícia', e));
+                    }
+                }
+            }
+        } catch (err) {
+            logError(`Erro no teamFeed para guild ${guild.id}`, err);
+        }
+    }
+}
+
 // Start sync + polling after bot connects
 client.once('ready', () => {
     // Initial sync after 5 seconds (let caches populate)
     setTimeout(() => syncToSite(), 5000);
+    // Pull configs from site MySQL (recover from state loss)
+    setTimeout(() => pullConfigsFromSite(), 8000);
     // Re-sync every 5 minutes
     setInterval(() => syncToSite(), 5 * 60 * 1000);
     // Poll for config updates every 30 seconds
     setInterval(() => pollConfigUpdates(), 30 * 1000);
-    log('🔄 Reverse push: sync + poll timers iniciados');
+    // Check team feed every 5 minutes
+    setInterval(() => checkTeamFeed(), 5 * 60 * 1000);
+    // Initial team feed check after 15 seconds
+    setTimeout(() => checkTeamFeed(), 15000);
+    log('🔄 Reverse push: sync + poll + teamFeed timers iniciados');
 });
 
 // ============================================
