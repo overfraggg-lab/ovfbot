@@ -194,6 +194,7 @@ let teamFeedConfig = {
     send_live: true,
     send_match_stats: true,
     send_news: false,
+    stats_channel_id: '',
 };
 
 let serverStatsConfig = {
@@ -215,6 +216,7 @@ let guildScopedConfig = {
     leave: {},
     general: {},
     teamFeed: {},
+    serverStats: {},
 };
 
 // Track suggestion votes: { messageId: { up: Set<userId>, down: Set<userId> } }
@@ -259,6 +261,7 @@ function loadConfig() {
                 leave: data.guildScoped.leave || {},
                 general: data.guildScoped.general || {},
                 teamFeed: data.guildScoped.teamFeed || {},
+                serverStats: data.guildScoped.serverStats || {},
             };
             log('Config carregada de bot_config.json');
         }
@@ -372,6 +375,7 @@ loadConfig();
                     leave: persisted.guildScoped.leave || guildScopedConfig.leave || {},
                     general: persisted.guildScoped.general || guildScopedConfig.general || {},
                     teamFeed: persisted.guildScoped.teamFeed || guildScopedConfig.teamFeed || {},
+                    serverStats: persisted.guildScoped.serverStats || guildScopedConfig.serverStats || {},
                 };
             }
             // restore simple music queues (songs only)
@@ -2117,8 +2121,8 @@ const server = http.createServer(async (req, res) => {
             if (!guild) return jsonResponse(res, 503, { error: 'Guild not found or bot not in guild' });
             
             const channels = guild.channels.cache
-                .filter(c => ['GUILD_TEXT', 'GUILD_NEWS', 'GUILD_VOICE'].includes(c.type))
-                .map(c => ({ id: c.id, name: c.name, type: c.type === 'GUILD_VOICE' ? 'voice' : 'text', parent: c.parent?.name || null }))
+                .filter(c => ['GUILD_TEXT', 'GUILD_NEWS', 'GUILD_VOICE', 'GUILD_CATEGORY'].includes(c.type))
+                .map(c => ({ id: c.id, name: c.name, type: c.type === 'GUILD_VOICE' ? 'voice' : c.type === 'GUILD_CATEGORY' ? 'category' : 'text', parent: c.parent?.name || null }))
                 .sort((a, b) => a.name.localeCompare(b.name));
             
             return jsonResponse(res, 200, { success: true, data: channels });
@@ -2134,8 +2138,8 @@ const server = http.createServer(async (req, res) => {
             if (!guild) return jsonResponse(res, 503, { error: 'Guild not found or bot not in guild' });
 
             const channels = guild.channels.cache
-                .filter(c => ['GUILD_TEXT', 'GUILD_NEWS', 'GUILD_VOICE'].includes(c.type))
-                .map(c => ({ id: c.id, name: c.name, type: c.type === 'GUILD_VOICE' ? 'voice' : 'text', parent: c.parent?.name || null }))
+                .filter(c => ['GUILD_TEXT', 'GUILD_NEWS', 'GUILD_VOICE', 'GUILD_CATEGORY'].includes(c.type))
+                .map(c => ({ id: c.id, name: c.name, type: c.type === 'GUILD_VOICE' ? 'voice' : c.type === 'GUILD_CATEGORY' ? 'category' : 'text', parent: c.parent?.name || null }))
                 .sort((a, b) => a.name.localeCompare(b.name));
 
             return jsonResponse(res, 200, { success: true, data: channels });
@@ -2654,6 +2658,45 @@ const server = http.createServer(async (req, res) => {
             }
 
             return jsonResponse(res, 200, { success: true, message: 'ServerStats config saved' });
+        } catch (err) {
+            return jsonResponse(res, 500, { error: err.message });
+        }
+    }
+
+    // GET /api/serverstats/:guildId - Guild-scoped server stats config
+    const ssGetMatch = urlPath.match(/^\/api\/serverstats\/(\d{17,20})$/);
+    if (ssGetMatch && req.method === 'GET') {
+        const guildId = ssGetMatch[1];
+        return jsonResponse(res, 200, { success: true, data: getScopedConfig('serverStats', guildId, serverStatsConfig) });
+    }
+
+    // PUT /api/serverstats/:guildId - Guild-scoped server stats config
+    if (ssGetMatch && req.method === 'PUT') {
+        try {
+            const guildId = ssGetMatch[1];
+            const body = await parseBody(req);
+            const current = getScopedConfig('serverStats', guildId, serverStatsConfig);
+            const wasEnabled = current.enabled;
+            const merged = { ...current, ...body };
+            if (body.channels && current.channels) {
+                merged.channels = { ...current.channels };
+                for (const [key, val] of Object.entries(body.channels)) {
+                    if (merged.channels[key]) {
+                        merged.channels[key] = { ...merged.channels[key], ...val };
+                    }
+                }
+            }
+            setScopedConfig('serverStats', guildId, merged);
+            saveConfig();
+            log(`ServerStats config atualizada para guild ${guildId}`);
+
+            // Trigger update if just enabled
+            if (merged.enabled && !wasEnabled) {
+                const guild = getGuildById(guildId);
+                if (guild) updateServerStats(guild);
+            }
+
+            return jsonResponse(res, 200, { success: true, data: merged });
         } catch (err) {
             return jsonResponse(res, 500, { error: err.message });
         }
