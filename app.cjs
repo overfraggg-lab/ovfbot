@@ -1945,7 +1945,7 @@ if (CONFIG.TOKEN) {
 // ============================================
 // SERVIDOR HTTP - API PARA O SITE
 // ============================================
-const PORT = process.env.PORT || 8080;
+const PORT = process.env.PORT || process.env.SERVER_PORT || 8080;
 const BOT_API_SECRET = process.env.BOT_API_SECRET || 'overfrag-bot-secret-2024';
 
 // Helper: parse JSON body
