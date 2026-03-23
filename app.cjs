@@ -430,9 +430,18 @@ async function cacheGuildInvites(guild) {
         const map = new Map();
         invites.forEach(inv => map.set(inv.code, inv.uses));
         inviteCache.set(guild.id, map);
+        log(`📨 Invite cache: ${guild.name} — ${map.size} convites`);
     } catch (e) {
-        // Bot may lack MANAGE_GUILD permission — skip silently
+        log(`⚠️ Invite cache falhou em ${guild.name}: ${e.message}`);
     }
+}
+
+// Safe thumbnail URL — Discord requires absolute https:// URL
+function safeThumbnail(url) {
+    if (!url || typeof url !== 'string') return null;
+    if (/^https?:\/\//i.test(url)) return url;
+    // Relative path → prefix with site URL
+    return `${SITE_API_URL}/${url.replace(/^\//, '')}`;
 }
 
 // ============================================
@@ -1760,9 +1769,9 @@ client.on('interactionCreate', async interaction => {
                     .setTitle('🎵 A tocar')
                     .setDescription(`[${songInfo.title}](${songInfo.url})`)
                     .addField('Duração', songInfo.duration || '?', true)
-                    .setThumbnail(songInfo.thumbnail || '')
                     .setFooter({ text: `Pedido por ${interaction.user.tag}` })
                     .setTimestamp();
+                if (songInfo.thumbnail && /^https?:\/\//.test(songInfo.thumbnail)) embed.setThumbnail(songInfo.thumbnail);
 
                 await interaction.editReply({ embeds: [embed] });
             } else {
@@ -1844,8 +1853,8 @@ client.on('interactionCreate', async interaction => {
             .setTitle('🎵 A tocar agora')
             .setDescription(`[${song.title}](${song.url})`)
             .addField('Duração', song.duration || '?', true)
-            .setThumbnail(song.thumbnail || '')
             .setTimestamp();
+        if (song.thumbnail && /^https?:\/\//.test(song.thumbnail)) embed.setThumbnail(song.thumbnail);
 
         await interaction.reply({ embeds: [embed] });
     }
@@ -3372,7 +3381,8 @@ async function checkTeamFeed() {
                         .setDescription(`${match.torneio_nome ? `**${match.torneio_nome}**\n` : ''}${match.formato ? `Formato: ${match.formato}\n` : ''}${dateStr ? `📆 ${dateStr}` : ''}`)
                         .setFooter({ text: 'Próximo jogo' })
                         .setTimestamp();
-                    if (match.equipa1_logo) embed.setThumbnail(match.equipa1_logo);
+                    const thumb0 = safeThumbnail(match.equipa1_logo);
+                    if (thumb0) embed.setThumbnail(thumb0);
                     await channel.send({ embeds: [embed] }).catch(e => logError('Erro ao enviar próximo jogo', e));
                 }
             }
@@ -3401,7 +3411,8 @@ async function checkTeamFeed() {
                         .setDescription(`${match.torneio_nome ? `**${match.torneio_nome}**\n` : ''}${scoreInfo}${mapInfo}${match.stream_url ? `\n📺 [Ver stream](${match.stream_url})` : ''}`)
                         .setFooter({ text: 'Jogo ao vivo' })
                         .setTimestamp();
-                    if (match.equipa1_logo) embed.setThumbnail(match.equipa1_logo);
+                    const thumb1 = safeThumbnail(match.equipa1_logo);
+                    if (thumb1) embed.setThumbnail(thumb1);
                     await channel.send({ embeds: [embed] }).catch(e => logError('Erro ao enviar jogo ao vivo', e));
                 }
             }
@@ -3443,7 +3454,8 @@ async function checkTeamFeed() {
                             .setDescription(`**Resultado:** ${score}${event ? `\n**Evento:** ${event}` : ''}${mapsText ? `\n\n**Mapas:**${mapsText}` : ''}`)
                             .setFooter({ text: 'Resultado final' })
                             .setTimestamp(match.data_jogo ? new Date(match.data_jogo) : new Date());
-                        if (match.equipa1_logo) embed.setThumbnail(match.equipa1_logo);
+                        const thumb2 = safeThumbnail(match.equipa1_logo);
+                        if (thumb2) embed.setThumbnail(thumb2);
                         await channel.send({ embeds: [embed] }).catch(e => logError('Erro ao enviar resultado', e));
                     }
                 }
@@ -3531,7 +3543,8 @@ async function checkTeamFeed() {
                             .setDescription(statsText)
                             .setFooter({ text: 'Match Stats' })
                             .setTimestamp(match.data_jogo ? new Date(match.data_jogo) : new Date());
-                        if (match.equipa1_logo) embed.setThumbnail(match.equipa1_logo);
+                        const thumb3 = safeThumbnail(match.equipa1_logo);
+                        if (thumb3) embed.setThumbnail(thumb3);
                         await channel.send({ embeds: [embed] }).catch(e => logError('Erro ao enviar stats', e));
                     }
                 }
