@@ -2797,6 +2797,16 @@ async function syncToSite() {
             log('✅ Sync com site concluído');
         } else {
             logError('Sync com site falhou', { status: res.status, text: await res.text().catch(() => '') });
+            // Retry once after 30 seconds on failure
+            setTimeout(() => {
+                fetch(SYNC_ENDPOINT, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${BOT_API_SECRET}` },
+                    body: JSON.stringify({ guilds, guildData, configs }),
+                    timeout: 15000
+                }).then(r => { if (r.ok) log('✅ Sync retry concluído'); })
+                  .catch(() => {});
+            }, 30000);
         }
     } catch (err) {
         logError('Erro ao sincronizar com site', err);
@@ -2811,43 +2821,64 @@ async function pollConfigUpdates() {
             timeout: 10000
         });
 
-        if (!res.ok) return;
+        if (!res.ok) {
+            // Retry once after 10 seconds
+            setTimeout(async () => {
+                try {
+                    const r = await fetch(POLL_ENDPOINT, {
+                        headers: { 'Authorization': `Bearer ${BOT_API_SECRET}` },
+                        timeout: 10000
+                    });
+                    if (r.ok) {
+                        const { updates } = await r.json();
+                        if (Array.isArray(updates) && updates.length > 0) {
+                            applyConfigUpdates(updates);
+                        }
+                    }
+                } catch { /* silent retry fail */ }
+            }, 10000);
+            return;
+        }
         const { updates } = await res.json();
         if (!Array.isArray(updates) || updates.length === 0) return;
 
-        for (const update of updates) {
-            const { guildId, section, data } = update;
-            if (!guildId || !section || !data) continue;
-
-            // Handle deploy actions
-            if (section === '__action:deploy-tickets') {
-                try { await deployTicketEmbed(guildId, data); } catch (e) { logError('Erro ao deploy tickets', e); }
-                continue;
-            }
-
-            log(`📥 Config update recebido: ${section} para guild ${guildId}`);
-            setScopedConfig(section, guildId, data);
-
-            // Also update top-level config for main guild
-            if (guildId === CONFIG.GUILD_ID) {
-                switch (section) {
-                    case 'welcome': welcomeConfig = { ...welcomeConfig, ...data }; break;
-                    case 'leave': leaveConfig = { ...leaveConfig, ...data }; break;
-                    case 'autorole': autoroleConfig = { ...autoroleConfig, ...data }; break;
-                    case 'suggestions': suggestionConfig = { ...suggestionConfig, ...data }; break;
-                    case 'general': generalConfig = { ...generalConfig, ...data }; break;
-                    case 'teamFeed': teamFeedConfig = { ...teamFeedConfig, ...data }; break;
-                    case 'serverStats': serverStatsConfig = { ...serverStatsConfig, ...data }; break;
-                    case 'tickets': ticketConfig = { ...ticketConfig, ...data }; break;
-                }
-            }
-        }
-
-        saveConfig();
-        log(`✅ ${updates.length} config update(s) aplicados`);
+        applyConfigUpdates(updates);
     } catch (err) {
         logError('Erro ao poll config updates', err);
     }
+}
+
+function applyConfigUpdates(updates) {
+    for (const update of updates) {
+        const { guildId, section, data } = update;
+        if (!guildId || !section || !data) continue;
+
+        // Handle deploy actions
+        if (section === '__action:deploy-tickets') {
+            try { deployTicketEmbed(guildId, data); } catch (e) { logError('Erro ao deploy tickets', e); }
+            continue;
+        }
+
+        log(`📥 Config update recebido: ${section} para guild ${guildId}`);
+        setScopedConfig(section, guildId, data);
+
+        // Also update top-level config for main guild
+        if (guildId === CONFIG.GUILD_ID) {
+            switch (section) {
+                case 'welcome': welcomeConfig = { ...welcomeConfig, ...data }; break;
+                case 'leave': leaveConfig = { ...leaveConfig, ...data }; break;
+                case 'autorole': autoroleConfig = { ...autoroleConfig, ...data }; break;
+                case 'suggestions': suggestionConfig = { ...suggestionConfig, ...data }; break;
+                case 'general': generalConfig = { ...generalConfig, ...data }; break;
+                case 'teamFeed': teamFeedConfig = { ...teamFeedConfig, ...data }; break;
+                case 'serverStats': serverStatsConfig = { ...serverStatsConfig, ...data }; break;
+                case 'tickets': ticketConfig = { ...ticketConfig, ...data }; break;
+            }
+        }
+    }
+
+    saveConfig();
+    log(`✅ ${updates.length} config update(s) aplicados`);
 }
 
 // Helper: deploy ticket embed to a channel (used by API + config-queue action)
@@ -2906,22 +2937,19 @@ async function pullConfigsFromSite() {
         for (const [guildId, sections] of Object.entries(configs)) {
             for (const [section, data] of Object.entries(sections)) {
                 if (!data) continue;
-                // Only apply if we don't already have a non-default guild-scoped config
-                const existing = guildScopedConfig?.[section]?.[guildId];
-                if (!existing || !existing.enabled) {
-                    setScopedConfig(section, guildId, data);
-                    count++;
-                }
+                // MySQL is authoritative — always apply site configs
+                setScopedConfig(section, guildId, data);
+                count++;
                 // Also update top-level for main guild
                 if (guildId === CONFIG.GUILD_ID) {
                     switch (section) {
-                        case 'welcome': if (!welcomeConfig.enabled) welcomeConfig = { ...welcomeConfig, ...data }; break;
-                        case 'leave': if (!leaveConfig.enabled) leaveConfig = { ...leaveConfig, ...data }; break;
-                        case 'autorole': if (!autoroleConfig.enabled) autoroleConfig = { ...autoroleConfig, ...data }; break;
+                        case 'welcome': welcomeConfig = { ...welcomeConfig, ...data }; break;
+                        case 'leave': leaveConfig = { ...leaveConfig, ...data }; break;
+                        case 'autorole': autoroleConfig = { ...autoroleConfig, ...data }; break;
                         case 'suggestions': suggestionConfig = { ...suggestionConfig, ...data }; break;
                         case 'general': generalConfig = { ...generalConfig, ...data }; break;
-                        case 'teamFeed': if (!teamFeedConfig.enabled) teamFeedConfig = { ...teamFeedConfig, ...data }; break;
-                        case 'serverStats': if (!serverStatsConfig.enabled) serverStatsConfig = { ...serverStatsConfig, ...data }; break;
+                        case 'teamFeed': teamFeedConfig = { ...teamFeedConfig, ...data }; break;
+                        case 'serverStats': serverStatsConfig = { ...serverStatsConfig, ...data }; break;
                         case 'tickets': ticketConfig = { ...ticketConfig, ...data }; break;
                     }
                 }
@@ -2942,6 +2970,29 @@ async function pullConfigsFromSite() {
 // TEAM FEED — Post match results & news to Discord
 // ============================================
 const postedFeedItems = new Set(); // Track posted items to avoid duplicates
+const FEED_ITEMS_FILE = path.join(__dirname, 'data', 'posted_feed_items.json');
+const MAX_FEED_ITEMS = 500;
+
+// Load persisted feed items on startup
+try {
+    if (fs.existsSync(FEED_ITEMS_FILE)) {
+        const items = JSON.parse(fs.readFileSync(FEED_ITEMS_FILE, 'utf8'));
+        if (Array.isArray(items)) items.forEach(i => postedFeedItems.add(i));
+    }
+} catch { /* ignore */ }
+
+function saveFeedItems() {
+    try {
+        // Cap size: keep only the most recent entries
+        if (postedFeedItems.size > MAX_FEED_ITEMS) {
+            const arr = [...postedFeedItems];
+            postedFeedItems.clear();
+            arr.slice(-MAX_FEED_ITEMS).forEach(i => postedFeedItems.add(i));
+        }
+        fs.mkdirSync(path.dirname(FEED_ITEMS_FILE), { recursive: true });
+        fs.promises.writeFile(FEED_ITEMS_FILE, JSON.stringify([...postedFeedItems]), 'utf8').catch(() => {});
+    } catch { /* ignore */ }
+}
 
 async function checkTeamFeed() {
     if (!client.user || !isConnected) return;
@@ -3098,6 +3149,8 @@ async function checkTeamFeed() {
             logError(`Erro no teamFeed para guild ${guild.id}`, err);
         }
     }
+    // Persist posted items to avoid duplicates after restart
+    saveFeedItems();
 }
 
 // Start sync + polling after bot connects
