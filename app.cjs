@@ -2859,6 +2859,18 @@ function applyConfigUpdates(updates) {
             continue;
         }
 
+        // Handle send-embed action (fallback when bot is unreachable via HTTP)
+        if (section === '__action:send-embed') {
+            try { sendEmbedAction(guildId, data); } catch (e) { logError('Erro ao send-embed via queue', e); }
+            continue;
+        }
+
+        // Handle news publish — send to all guilds with news channel configured
+        if (section === '__action:publish-news') {
+            try { broadcastNews(data); } catch (e) { logError('Erro ao broadcast news', e); }
+            continue;
+        }
+
         log(`📥 Config update recebido: ${section} para guild ${guildId}`);
         setScopedConfig(section, guildId, data);
 
@@ -2918,6 +2930,77 @@ async function deployTicketEmbed(guildId, data) {
 
     await channel.send({ embeds: [embed], components: [row] });
     log(`Ticket embed deployed to #${channel.name} (guild ${guildId})`);
+}
+
+// Send embed via config queue (fallback when bot HTTP is unreachable)
+async function sendEmbedAction(guildId, data) {
+    const guild = client.guilds.cache.get(guildId) || getMainGuild();
+    if (!guild) throw new Error('Guild not found');
+
+    const { channel_id, content, embed: embedData } = data;
+    if (!channel_id || !embedData) throw new Error('channel_id and embed required');
+
+    const channel = guild.channels.cache.get(channel_id);
+    if (!channel) throw new Error('Channel not found');
+
+    const embed = new MessageEmbed();
+    if (embedData.title) embed.setTitle(embedData.title);
+    if (embedData.description) embed.setDescription(embedData.description);
+    if (embedData.color) embed.setColor(embedData.color);
+    if (embedData.url) embed.setURL(embedData.url);
+    if (embedData.image?.url) embed.setImage(embedData.image.url);
+    if (embedData.thumbnail?.url) embed.setThumbnail(embedData.thumbnail.url);
+    if (embedData.footer?.text) embed.setFooter({ text: embedData.footer.text, iconURL: embedData.footer.icon_url || undefined });
+    if (embedData.author?.name) embed.setAuthor({ name: embedData.author.name, url: embedData.author.url || undefined, iconURL: embedData.author.icon_url || undefined });
+    if (embedData.timestamp) embed.setTimestamp();
+    if (Array.isArray(embedData.fields)) {
+        for (const f of embedData.fields) {
+            if (f.name && f.value) embed.addField(f.name, f.value, !!f.inline);
+        }
+    }
+
+    const sendOpts = { embeds: [embed] };
+    if (content) sendOpts.content = content;
+    await channel.send(sendOpts);
+    log(`Embed enviado via queue para #${channel.name} (guild ${guildId})`);
+}
+
+// Broadcast a published news article to all guilds with news channel configured
+async function broadcastNews(article) {
+    if (!article || !article.id) return;
+
+    const title = article.titulo || article.title || 'Nova Notícia';
+    const url = article.slug
+        ? `${SITE_API_URL}/noticia/${article.slug}`
+        : `${SITE_API_URL}/noticia/${article.id}`;
+
+    for (const guild of client.guilds.cache.values()) {
+        const cfg = getScopedConfig('teamFeed', guild.id, teamFeedConfig);
+        if (!cfg.send_news || !cfg.news_channel_id) continue;
+
+        const feedKey = `news:${guild.id}:${article.id}`;
+        if (postedFeedItems.has(feedKey)) continue;
+        postedFeedItems.add(feedKey);
+
+        const channel = guild.channels.cache.get(cfg.news_channel_id);
+        if (!channel) continue;
+
+        try {
+            const embed = new MessageEmbed()
+                .setColor('#5865F2')
+                .setTitle(`📰 ${title}`)
+                .setURL(url)
+                .setDescription(article.resumo || article.descricao || '')
+                .setFooter({ text: 'OVERFRAG Notícias' })
+                .setTimestamp(article.data_publicacao ? new Date(article.data_publicacao) : new Date());
+            if (article.imagem) embed.setImage(article.imagem);
+            await channel.send({ embeds: [embed] });
+            log(`Notícia enviada: "${title}" para #${channel.name} (guild ${guild.id})`);
+        } catch (e) {
+            logError(`Erro ao enviar notícia para guild ${guild.id}`, e);
+        }
+    }
+    saveFeedItems();
 }
 
 // Pull all configs from site MySQL on startup (recovers from state loss)
@@ -2999,95 +3082,133 @@ async function checkTeamFeed() {
 
     for (const guild of client.guilds.cache.values()) {
         const cfg = getScopedConfig('teamFeed', guild.id, teamFeedConfig);
-        if (!cfg.enabled || !cfg.team_name) continue;
+        if (!cfg.enabled) continue;
 
         try {
-            const teamQuery = encodeURIComponent(cfg.team_name);
+            const hasTeam = cfg.team_name && cfg.team_name.trim();
 
-            // --- Upcoming games ---
-            if (cfg.send_upcoming && cfg.upcoming_channel_id) {
+            // --- News (ALL news — independent of team selection) ---
+            if (cfg.send_news && cfg.news_channel_id) {
+                const newsRes = await fetch(`${SITE_API_URL}/backend/api/noticias?limit=5`, {
+                    signal: AbortSignal.timeout(10000)
+                }).catch(() => null);
+                if (newsRes?.ok) {
+                    const newsData = await newsRes.json().catch(() => null);
+                    const articles = newsData?.data || newsData?.noticias || (Array.isArray(newsData) ? newsData : []);
+                    for (const article of articles) {
+                        const feedKey = `news:${guild.id}:${article.id}`;
+                        if (postedFeedItems.has(feedKey)) continue;
+                        postedFeedItems.add(feedKey);
+
+                        const channel = guild.channels.cache.get(cfg.news_channel_id);
+                        if (!channel) continue;
+
+                        const title = article.titulo || article.title || 'Nova Notícia';
+                        const newsUrl = article.slug
+                            ? `${SITE_API_URL}/noticia/${article.slug}`
+                            : `${SITE_API_URL}/noticia/${article.id}`;
+
+                        const embed = new MessageEmbed()
+                            .setColor('#5865F2')
+                            .setTitle(`📰 ${title}`)
+                            .setURL(newsUrl)
+                            .setDescription(article.resumo || article.excerpt || article.descricao || '')
+                            .setFooter({ text: 'OVERFRAG Notícias' })
+                            .setTimestamp(article.data_publicacao ? new Date(article.data_publicacao) : new Date());
+                        if (article.imagem || article.image_url) embed.setImage(article.imagem || article.image_url);
+                        await channel.send({ embeds: [embed] }).catch(e => logError('Erro ao enviar notícia', e));
+                    }
+                }
+            }
+
+            // Team-specific feeds (upcoming, live, results, stats) require a team
+            if (!hasTeam) continue;
+            const teamQuery = encodeURIComponent(cfg.team_name);
+            const teamLower = cfg.team_name.toLowerCase();
+
+            const matchesTeam = (m) => {
+                return (m.equipa1_nome || '').toLowerCase().includes(teamLower) ||
+                       (m.equipa2_nome || '').toLowerCase().includes(teamLower) ||
+                       (m.equipa1_sigla || '').toLowerCase() === teamLower ||
+                       (m.equipa2_sigla || '').toLowerCase() === teamLower;
+            };
+
+            // Fetch upcoming/live games once (same endpoint)
+            let allGames = [];
+            if ((cfg.send_upcoming && cfg.upcoming_channel_id) || (cfg.send_live && cfg.live_channel_id)) {
                 const upRes = await fetch(`${SITE_API_URL}/backend/jogos/proximos`, {
                     signal: AbortSignal.timeout(10000)
                 }).catch(() => null);
                 if (upRes?.ok) {
                     const upData = await upRes.json().catch(() => null);
-                    const items = upData?.items || (Array.isArray(upData) ? upData : []);
-                    const teamMatches = items.filter(m => {
-                        const t = cfg.team_name.toLowerCase();
-                        return (m.equipa1_nome || '').toLowerCase().includes(t) ||
-                               (m.equipa2_nome || '').toLowerCase().includes(t) ||
-                               (m.equipa1_sigla || '').toLowerCase() === t ||
-                               (m.equipa2_sigla || '').toLowerCase() === t;
-                    });
-                    for (const match of teamMatches.slice(0, 5)) {
-                        const feedKey = `upcoming:${guild.id}:${match.id}`;
-                        if (postedFeedItems.has(feedKey)) continue;
-                        postedFeedItems.add(feedKey);
-
-                        const channel = guild.channels.cache.get(cfg.upcoming_channel_id);
-                        if (!channel) continue;
-
-                        const dateStr = match.data_jogo ? new Date(match.data_jogo).toLocaleDateString('pt-PT', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
-                        const embed = new MessageEmbed()
-                            .setColor('#3498db')
-                            .setTitle(`📅 ${match.equipa1_nome || 'TBD'} vs ${match.equipa2_nome || 'TBD'}`)
-                            .setDescription(`${match.torneio_nome ? `**${match.torneio_nome}**\n` : ''}${match.formato ? `Formato: ${match.formato}\n` : ''}${dateStr ? `📆 ${dateStr}` : ''}`)
-                            .setFooter({ text: 'Próximo jogo' })
-                            .setTimestamp();
-                        if (match.equipa1_logo) embed.setThumbnail(match.equipa1_logo);
-                        await channel.send({ embeds: [embed] }).catch(e => logError('Erro ao enviar próximo jogo', e));
-                    }
+                    allGames = upData?.items || (Array.isArray(upData) ? upData : []);
                 }
             }
 
-            // --- Live games ---
-            if (cfg.send_live && cfg.live_channel_id) {
-                const liveRes = await fetch(`${SITE_API_URL}/backend/jogos/proximos`, {
-                    signal: AbortSignal.timeout(10000)
-                }).catch(() => null);
-                if (liveRes?.ok) {
-                    const liveData = await liveRes.json().catch(() => null);
-                    const items = liveData?.items || (Array.isArray(liveData) ? liveData : []);
-                    const liveMatches = items.filter(m => {
-                        const isLive = (m.estado || '').toLowerCase() === 'ao_vivo' || (m.estado || '').toLowerCase() === 'em_curso';
-                        if (!isLive) return false;
-                        const t = cfg.team_name.toLowerCase();
-                        return (m.equipa1_nome || '').toLowerCase().includes(t) ||
-                               (m.equipa2_nome || '').toLowerCase().includes(t);
-                    });
-                    for (const match of liveMatches) {
-                        const feedKey = `live:${guild.id}:${match.id}`;
-                        if (postedFeedItems.has(feedKey)) continue;
-                        postedFeedItems.add(feedKey);
+            // --- Upcoming games (selected team only) ---
+            if (cfg.send_upcoming && cfg.upcoming_channel_id && allGames.length > 0) {
+                const teamMatches = allGames.filter(m => {
+                    const state = (m.estado || '').toLowerCase();
+                    return state !== 'ao_vivo' && state !== 'em_curso' && state !== 'terminado' && matchesTeam(m);
+                });
+                for (const match of teamMatches.slice(0, 5)) {
+                    const feedKey = `upcoming:${guild.id}:${match.id}`;
+                    if (postedFeedItems.has(feedKey)) continue;
+                    postedFeedItems.add(feedKey);
 
-                        const channel = guild.channels.cache.get(cfg.live_channel_id);
-                        if (!channel) continue;
+                    const channel = guild.channels.cache.get(cfg.upcoming_channel_id);
+                    if (!channel) continue;
 
-                        const ld = match.live_data || {};
-                        const scoreInfo = ld.round_score ? `\n🔴 **Score:** ${ld.round_score}` : '';
-                        const mapInfo = ld.mapa_atual ? `\n🗺️ **Mapa:** ${ld.mapa_atual}${ld.mapa_numero ? ` (${ld.mapa_numero}/${ld.mapas_total || '?'})` : ''}` : '';
-
-                        const embed = new MessageEmbed()
-                            .setColor('#e74c3c')
-                            .setTitle(`🔴 AO VIVO: ${match.equipa1_nome || 'TBD'} vs ${match.equipa2_nome || 'TBD'}`)
-                            .setDescription(`${match.torneio_nome ? `**${match.torneio_nome}**\n` : ''}${scoreInfo}${mapInfo}${match.stream_url ? `\n📺 [Ver stream](${match.stream_url})` : ''}`)
-                            .setFooter({ text: 'Jogo ao vivo' })
-                            .setTimestamp();
-                        if (match.equipa1_logo) embed.setThumbnail(match.equipa1_logo);
-                        await channel.send({ embeds: [embed] }).catch(e => logError('Erro ao enviar jogo ao vivo', e));
-                    }
+                    const dateStr = match.data_jogo ? new Date(match.data_jogo).toLocaleDateString('pt-PT', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+                    const embed = new MessageEmbed()
+                        .setColor('#3498db')
+                        .setTitle(`📅 ${match.equipa1_nome || 'TBD'} vs ${match.equipa2_nome || 'TBD'}`)
+                        .setDescription(`${match.torneio_nome ? `**${match.torneio_nome}**\n` : ''}${match.formato ? `Formato: ${match.formato}\n` : ''}${dateStr ? `📆 ${dateStr}` : ''}`)
+                        .setFooter({ text: 'Próximo jogo' })
+                        .setTimestamp();
+                    if (match.equipa1_logo) embed.setThumbnail(match.equipa1_logo);
+                    await channel.send({ embeds: [embed] }).catch(e => logError('Erro ao enviar próximo jogo', e));
                 }
             }
 
-            // --- Results ---
+            // --- Live games (selected team only) ---
+            if (cfg.send_live && cfg.live_channel_id && allGames.length > 0) {
+                const liveMatches = allGames.filter(m => {
+                    const state = (m.estado || '').toLowerCase();
+                    return (state === 'ao_vivo' || state === 'em_curso') && matchesTeam(m);
+                });
+                for (const match of liveMatches) {
+                    const feedKey = `live:${guild.id}:${match.id}`;
+                    if (postedFeedItems.has(feedKey)) continue;
+                    postedFeedItems.add(feedKey);
+
+                    const channel = guild.channels.cache.get(cfg.live_channel_id);
+                    if (!channel) continue;
+
+                    const ld = match.live_data || {};
+                    const scoreInfo = ld.round_score ? `\n🔴 **Score:** ${ld.round_score}` : '';
+                    const mapInfo = ld.mapa_atual ? `\n🗺️ **Mapa:** ${ld.mapa_atual}${ld.mapa_numero ? ` (${ld.mapa_numero}/${ld.mapas_total || '?'})` : ''}` : '';
+
+                    const embed = new MessageEmbed()
+                        .setColor('#e74c3c')
+                        .setTitle(`🔴 AO VIVO: ${match.equipa1_nome || 'TBD'} vs ${match.equipa2_nome || 'TBD'}`)
+                        .setDescription(`${match.torneio_nome ? `**${match.torneio_nome}**\n` : ''}${scoreInfo}${mapInfo}${match.stream_url ? `\n📺 [Ver stream](${match.stream_url})` : ''}`)
+                        .setFooter({ text: 'Jogo ao vivo' })
+                        .setTimestamp();
+                    if (match.equipa1_logo) embed.setThumbnail(match.equipa1_logo);
+                    await channel.send({ embeds: [embed] }).catch(e => logError('Erro ao enviar jogo ao vivo', e));
+                }
+            }
+
+            // --- Results (selected team only) ---
             if (cfg.send_results && cfg.results_channel_id) {
-                const matchRes = await fetch(`${SITE_API_URL}/backend/jogos/resultados?equipa=${teamQuery}`, {
+                const matchRes = await fetch(`${SITE_API_URL}/backend/jogos/resultados?equipa=${teamQuery}&limit=5`, {
                     signal: AbortSignal.timeout(10000)
                 }).catch(() => null);
                 if (matchRes?.ok) {
                     const matchData = await matchRes.json().catch(() => null);
-                    const matches = matchData?.items || matchData?.data || (Array.isArray(matchData) ? matchData : []);
-                    for (const match of matches.slice(0, 5)) {
+                    const results = matchData?.items || matchData?.data || (Array.isArray(matchData) ? matchData : []);
+                    for (const match of results.slice(0, 5)) {
                         const feedKey = `result:${guild.id}:${match.id}`;
                         if (postedFeedItems.has(feedKey)) continue;
                         postedFeedItems.add(feedKey);
@@ -3112,36 +3233,55 @@ async function checkTeamFeed() {
                 }
             }
 
-            // --- News ---
-            if (cfg.send_news && cfg.news_channel_id) {
-                const newsRes = await fetch(`${SITE_API_URL}/backend/api/noticias?limit=3`, {
+            // --- Match Stats (selected team only — fetch stats for finished team games) ---
+            if (cfg.send_match_stats && cfg.stats_channel_id) {
+                const statsRes = await fetch(`${SITE_API_URL}/backend/jogos/resultados?equipa=${teamQuery}&limit=3`, {
                     signal: AbortSignal.timeout(10000)
                 }).catch(() => null);
-                if (newsRes?.ok) {
-                    const newsData = await newsRes.json().catch(() => null);
-                    const articles = newsData?.data || newsData?.noticias || (Array.isArray(newsData) ? newsData : []);
-                    for (const article of articles) {
-                        const feedKey = `news:${guild.id}:${article.id}`;
+                if (statsRes?.ok) {
+                    const statsData = await statsRes.json().catch(() => null);
+                    const results = statsData?.items || statsData?.data || (Array.isArray(statsData) ? statsData : []);
+                    for (const match of results.slice(0, 3)) {
+                        const feedKey = `stats:${guild.id}:${match.id}`;
                         if (postedFeedItems.has(feedKey)) continue;
+
+                        // Fetch match details with stats
+                        const detailRes = await fetch(`${SITE_API_URL}/backend/jogos/${match.id}`, {
+                            signal: AbortSignal.timeout(10000)
+                        }).catch(() => null);
+                        if (!detailRes?.ok) continue;
+                        const detail = await detailRes.json().catch(() => null);
+                        if (!detail) continue;
+
                         postedFeedItems.add(feedKey);
 
-                        const channel = guild.channels.cache.get(cfg.news_channel_id);
+                        const channel = guild.channels.cache.get(cfg.stats_channel_id);
                         if (!channel) continue;
 
-                        const title = article.titulo || article.title || 'Nova Notícia';
-                        const url = article.slug
-                            ? `${SITE_API_URL}/noticia/${article.slug}`
-                            : `${SITE_API_URL}/noticia/${article.id}`;
+                        const team1 = match.equipa1_nome || 'Equipa 1';
+                        const team2 = match.equipa2_nome || 'Equipa 2';
+                        const score = `${match.resultado_equipa1 ?? 0}-${match.resultado_equipa2 ?? 0}`;
+
+                        // Build stats description from match detail
+                        let statsText = `**${team1}** ${score} **${team2}**`;
+                        const maps = detail.mapas || detail.maps || [];
+                        if (maps.length > 0) {
+                            statsText += '\n\n**Mapas:**';
+                            for (const map of maps) {
+                                const mapName = map.mapa || map.name || 'Mapa';
+                                const mapScore = `${map.resultado_equipa1 ?? '-'}-${map.resultado_equipa2 ?? '-'}`;
+                                statsText += `\n🗺️ ${mapName}: ${mapScore}`;
+                            }
+                        }
 
                         const embed = new MessageEmbed()
-                            .setColor('#5865F2')
-                            .setTitle(`📰 ${title}`)
-                            .setURL(url)
-                            .setDescription(article.resumo || article.excerpt || article.descricao || '')
-                            .setFooter({ text: 'Notícias' })
-                            .setTimestamp(article.data_publicacao ? new Date(article.data_publicacao) : new Date());
-                        if (article.imagem || article.image_url) embed.setImage(article.imagem || article.image_url);
-                        await channel.send({ embeds: [embed] }).catch(e => logError('Erro ao enviar notícia', e));
+                            .setColor('#9b59b6')
+                            .setTitle(`📊 Stats: ${team1} vs ${team2}`)
+                            .setDescription(statsText)
+                            .setFooter({ text: 'Match Stats' })
+                            .setTimestamp(match.data_jogo ? new Date(match.data_jogo) : new Date());
+                        if (match.equipa1_logo) embed.setThumbnail(match.equipa1_logo);
+                        await channel.send({ embeds: [embed] }).catch(e => logError('Erro ao enviar stats', e));
                     }
                 }
             }
