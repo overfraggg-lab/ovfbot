@@ -1535,6 +1535,7 @@ client.on('interactionCreate', async interaction => {
             { cmd: '/site', desc: 'Link para o site' },
             { cmd: '/comandos', desc: 'Lista de comandos' },
             { cmd: '/lft', desc: 'Lista de free agents' },
+            { cmd: '/invites [user]', desc: 'Ranking de convites do servidor' },
         ];
         const cmdEmbed = new MessageEmbed()
             .setColor('#5865F2')
@@ -1642,10 +1643,11 @@ client.on('interactionCreate', async interaction => {
             return interaction.reply({ embeds: [embed] });
         }
 
-        // Show leaderboard
+        // Show leaderboard — defer because user fetches can be slow
+        await interaction.deferReply();
         const board = inviteLeaderboard.get(guildId);
         if (!board || board.size === 0) {
-            return interaction.reply({ content: '📨 Ainda não há dados de convites neste servidor.', ephemeral: true });
+            return interaction.editReply({ content: '📨 Ainda não há dados de convites neste servidor.' });
         }
 
         const sorted = [...board.entries()]
@@ -1668,7 +1670,7 @@ client.on('interactionCreate', async interaction => {
             .setFooter({ text: `${interaction.guild.name} • Desde o último restart do bot` })
             .setTimestamp();
 
-        return interaction.reply({ embeds: [embed] });
+        return interaction.editReply({ embeds: [embed] });
     }
 
     // ============================================
