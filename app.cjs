@@ -413,9 +413,27 @@ const client = new Client({
         Intents.FLAGS.GUILD_MESSAGES,
         Intents.FLAGS.GUILD_MESSAGE_REACTIONS,
         Intents.FLAGS.GUILD_PRESENCES,
-        Intents.FLAGS.MESSAGE_CONTENT
+        Intents.FLAGS.MESSAGE_CONTENT,
+        Intents.FLAGS.GUILD_INVITES
     ]
 });
+
+// ============================================
+// INVITE TRACKING
+// ============================================
+// Cache: guildId -> Map<inviteCode, uses>
+const inviteCache = new Map();
+
+async function cacheGuildInvites(guild) {
+    try {
+        const invites = await guild.invites.fetch();
+        const map = new Map();
+        invites.forEach(inv => map.set(inv.code, inv.uses));
+        inviteCache.set(guild.id, map);
+    } catch (e) {
+        // Bot may lack MANAGE_GUILD permission — skip silently
+    }
+}
 
 // ============================================
 // EVENTOS
@@ -453,17 +471,36 @@ client.once('ready', async () => {
     } catch (err) {
         logError('Falha ao registar comandos globais (não-fatal)', err);
     }
+
+    // Cache invites for all guilds
+    for (const [, guild] of client.guilds.cache) {
+        await cacheGuildInvites(guild);
+    }
+    log(`📨 Invite cache inicializado para ${inviteCache.size} servidores`);
 });
 
 // ============================================
 // GUILD JOIN/LEAVE EVENTS
 // ============================================
-client.on('guildCreate', guild => {
+client.on('guildCreate', async guild => {
     log(`📥 Bot adicionado ao servidor: ${guild.name} (${guild.id}) - ${guild.memberCount} membros`);
+    await cacheGuildInvites(guild);
 });
 
 client.on('guildDelete', guild => {
     log(`📤 Bot removido do servidor: ${guild.name} (${guild.id})`);
+    inviteCache.delete(guild.id);
+});
+
+// Track invite changes
+client.on('inviteCreate', invite => {
+    const cached = inviteCache.get(invite.guild.id);
+    if (cached) cached.set(invite.code, invite.uses);
+});
+
+client.on('inviteDelete', invite => {
+    const cached = inviteCache.get(invite.guild.id);
+    if (cached) cached.delete(invite.code);
 });
 
 client.on('error', err => {
@@ -494,8 +531,42 @@ client.on('shardError', (error, shardId) => {
 // ============================================
 // WELCOME MESSAGE + AUTOROLE
 // ============================================
+
+// Invite leaderboard: guildId -> Map<inviterId, { count, invites: [{userId, timestamp}] }>
+const inviteLeaderboard = new Map();
+
 client.on('guildMemberAdd', async member => {
     const guildId = member.guild.id;
+
+    // --- Invite Tracking ---
+    try {
+        const oldCache = inviteCache.get(guildId);
+        const newInvites = await member.guild.invites.fetch();
+        const newMap = new Map();
+        newInvites.forEach(inv => newMap.set(inv.code, inv.uses));
+        inviteCache.set(guildId, newMap);
+
+        if (oldCache) {
+            // Find the invite whose uses increased
+            const usedInvite = newInvites.find(inv => {
+                const oldUses = oldCache.get(inv.code) || 0;
+                return inv.uses > oldUses;
+            });
+            if (usedInvite && usedInvite.inviter) {
+                const inviterId = usedInvite.inviter.id;
+                if (!inviteLeaderboard.has(guildId)) inviteLeaderboard.set(guildId, new Map());
+                const guildBoard = inviteLeaderboard.get(guildId);
+                if (!guildBoard.has(inviterId)) guildBoard.set(inviterId, { count: 0, invites: [] });
+                const entry = guildBoard.get(inviterId);
+                entry.count++;
+                entry.invites.push({ userId: member.id, timestamp: Date.now() });
+                log(`📨 ${member.user.tag} convidado por ${usedInvite.inviter.tag} (total: ${entry.count})`);
+            }
+        }
+    } catch (e) {
+        // Missing permissions or other issue — skip invite tracking silently
+    }
+
     const guildAutoroleConfig = getScopedConfig('autorole', guildId, autoroleConfig);
     const guildWelcomeConfig = getScopedConfig('welcome', guildId, welcomeConfig);
 
@@ -731,7 +802,11 @@ const tempChannels = new Map();
 
 client.on('voiceStateUpdate', async (oldState, newState) => {
     // User joined Join-to-Create channel
-    if (newState.channelId === CONFIG.CHANNELS.JOIN_TO_CREATE && newState.channel) {
+    const guildId = newState.guild?.id;
+    const gCfg = guildId ? getScopedConfig('general', guildId, generalConfig) : generalConfig;
+    const jtcChannelId = gCfg.join_to_create_channel_id || CONFIG.CHANNELS.JOIN_TO_CREATE;
+
+    if (jtcChannelId && newState.channelId === jtcChannelId && newState.channel) {
         try {
             const member = newState.member;
             const guild = newState.guild;
@@ -912,14 +987,17 @@ client.on('interactionCreate', async interaction => {
     // ---- Select Menu Interactions (Tickets) ----
     if (interaction.isSelectMenu() && interaction.customId === 'ticket_category') {
         try {
-            if (!ticketConfig.enabled) {
+            const guildId = interaction.guild?.id;
+            const cfg = guildId ? getScopedConfig('tickets', guildId, ticketConfig) : ticketConfig;
+
+            if (!cfg.enabled) {
                 return interaction.reply({ content: '❌ O sistema de tickets está desativado.', ephemeral: true });
             }
 
             await interaction.deferReply({ ephemeral: true });
 
             const categoryId = interaction.values[0];
-            const category = ticketConfig.categories.find(c => c.id === categoryId);
+            const category = cfg.categories.find(c => c.id === categoryId);
             const categoryName = category ? category.name : categoryId;
             const categoryEmoji = category ? category.emoji : '🎫';
 
@@ -929,7 +1007,7 @@ client.on('interactionCreate', async interaction => {
             // Check if user already has an open ticket
             const existingTicket = guild.channels.cache.find(ch =>
                 ch.name === `ticket-${member.user.username.toLowerCase().replace(/[^a-z0-9]/g, '')}` &&
-                ch.parentId === ticketConfig.category_id
+                ch.parentId === cfg.category_id
             );
             if (existingTicket) {
                 return interaction.editReply(`❌ Já tens um ticket aberto: <#${existingTicket.id}>`);
@@ -938,7 +1016,7 @@ client.on('interactionCreate', async interaction => {
             // Create ticket channel in the configured category
             const ticketChannel = await guild.channels.create(`ticket-${member.user.username}`, {
                 type: 'GUILD_TEXT',
-                parent: ticketConfig.category_id || undefined,
+                parent: cfg.category_id || undefined,
                 topic: `${categoryEmoji} ${categoryName} - Ticket de ${member.user.tag}`,
                 permissionOverwrites: [
                     { id: guild.id, deny: ['VIEW_CHANNEL'] },
@@ -949,7 +1027,7 @@ client.on('interactionCreate', async interaction => {
 
             // Send welcome embed in ticket
             const ticketEmbed = new MessageEmbed()
-                .setColor(ticketConfig.embed.color || '#5865F2')
+                .setColor(cfg.embed?.color || '#5865F2')
                 .setTitle(`${categoryEmoji} Ticket - ${categoryName}`)
                 .setDescription(`Olá ${member}, obrigado por abrir um ticket!\n\n**Categoria:** ${categoryEmoji} ${categoryName}\n\nDescreve o teu assunto e a nossa equipa irá responder o mais rápido possível.`)
                 .setFooter({ text: `OVERFRAG Tickets • ${member.user.tag}` })
@@ -962,8 +1040,8 @@ client.on('interactionCreate', async interaction => {
             await ticketChannel.send({ embeds: [ticketEmbed], components: [closeRow] });
 
             // Log
-            if (ticketConfig.log_channel_id) {
-                const logChannel = guild.channels.cache.get(ticketConfig.log_channel_id);
+            if (cfg.log_channel_id) {
+                const logChannel = guild.channels.cache.get(cfg.log_channel_id);
                 if (logChannel) {
                     const logEmbed = new MessageEmbed()
                         .setColor('#3fb950')
@@ -993,11 +1071,12 @@ client.on('interactionCreate', async interaction => {
             
             const channel = interaction.channel;
             const member = interaction.member;
+            const guild = interaction.guild;
+            const cfg = guild?.id ? getScopedConfig('tickets', guild.id, ticketConfig) : ticketConfig;
             
             // Log before deleting
-            if (ticketConfig.log_channel_id) {
-                const guild = interaction.guild;
-                const logChannel = guild.channels.cache.get(ticketConfig.log_channel_id);
+            if (cfg.log_channel_id) {
+                const logChannel = guild.channels.cache.get(cfg.log_channel_id);
                 if (logChannel) {
                     const logEmbed = new MessageEmbed()
                         .setColor('#f85149')
@@ -1446,6 +1525,7 @@ client.on('interactionCreate', async interaction => {
             { cmd: '/ping', desc: 'Latência do bot' },
             { cmd: '/site', desc: 'Link para o site' },
             { cmd: '/comandos', desc: 'Lista de comandos' },
+            { cmd: '/lft', desc: 'Lista de free agents' },
         ];
         const cmdEmbed = new MessageEmbed()
             .setColor('#5865F2')
@@ -1454,6 +1534,132 @@ client.on('interactionCreate', async interaction => {
             .setFooter({ text: `${interaction.guild?.name || 'Bot'} • ${cmdList.length} comandos` })
             .setTimestamp();
         await interaction.reply({ embeds: [cmdEmbed] });
+    } else if (commandName === 'lft') {
+        // ---- /lft command — Paginated free agents list ----
+        await interaction.deferReply();
+        try {
+            const roleFilter = interaction.options.getString('role') || '';
+            const lftRes = await fetch(`${SITE_API_URL}/backend/free-agents`, {
+                signal: AbortSignal.timeout(10000)
+            }).catch(() => null);
+
+            let agents = [];
+            if (lftRes?.ok) {
+                const lftData = await lftRes.json().catch(() => null);
+                agents = lftData?.items || lftData?.data || (Array.isArray(lftData) ? lftData : []);
+            }
+
+            if (roleFilter) {
+                agents = agents.filter(p => {
+                    const main = (p.role_main || '').toUpperCase();
+                    const sec = (p.role_secondary || '').toUpperCase();
+                    return main === roleFilter || sec === roleFilter || (roleFilter === 'IGL' && p.igl);
+                });
+            }
+
+            if (agents.length === 0) {
+                return interaction.editReply({ content: `❌ Nenhum free agent encontrado${roleFilter ? ` com role ${roleFilter}` : ''}.` });
+            }
+
+            const PER_PAGE = 8;
+            const totalPages = Math.ceil(agents.length / PER_PAGE);
+            let page = 0;
+
+            const buildEmbed = (pg) => {
+                const start = pg * PER_PAGE;
+                const slice = agents.slice(start, start + PER_PAGE);
+                const lines = slice.map((p, i) => {
+                    const nick = p.nick || p.nickname || '?';
+                    const role = p.role_main || '—';
+                    const skill = p.skill_overall ? `⭐ ${Number(p.skill_overall).toFixed(1)}` : '';
+                    const country = p.nacionalidade ? `:flag_${p.nacionalidade.toLowerCase().slice(0,2)}:` : '';
+                    return `**${start + i + 1}.** ${country} **${nick}** — ${role} ${skill}`;
+                });
+                return new MessageEmbed()
+                    .setColor('#FF5500')
+                    .setTitle(`📋 Free Agents (${agents.length})${roleFilter ? ` — ${roleFilter}` : ''}`)
+                    .setDescription(lines.join('\n'))
+                    .setFooter({ text: `Página ${pg + 1}/${totalPages} • overfrag.pt/free-agents` })
+                    .setTimestamp();
+            };
+
+            const buildButtons = (pg) => {
+                return new MessageActionRow().addComponents(
+                    new MessageButton().setCustomId('lft_prev').setLabel('◀️').setStyle('SECONDARY').setDisabled(pg === 0),
+                    new MessageButton().setCustomId('lft_next').setLabel('▶️').setStyle('SECONDARY').setDisabled(pg >= totalPages - 1),
+                    new MessageButton().setLabel('Ver no site').setStyle('LINK').setURL(`${SITE_API_URL}/free-agents`)
+                );
+            };
+
+            const msg = await interaction.editReply({ embeds: [buildEmbed(page)], components: totalPages > 1 ? [buildButtons(page)] : [] });
+
+            if (totalPages <= 1) return;
+
+            const collector = msg.createMessageComponentCollector({ time: 120000 });
+            collector.on('collect', async (btn) => {
+                if (btn.user.id !== interaction.user.id) {
+                    return btn.reply({ content: 'Usa /lft para ver a tua própria lista.', ephemeral: true });
+                }
+                if (btn.customId === 'lft_prev' && page > 0) page--;
+                if (btn.customId === 'lft_next' && page < totalPages - 1) page++;
+                await btn.update({ embeds: [buildEmbed(page)], components: [buildButtons(page)] });
+            });
+            collector.on('end', () => {
+                interaction.editReply({ components: [] }).catch(() => {});
+            });
+        } catch (err) {
+            logError('Erro no /lft', err);
+            await interaction.editReply({ content: '❌ Erro ao buscar free agents.' }).catch(() => {});
+        }
+    }
+
+    // ============================================
+    // INVITES COMMAND
+    // ============================================
+    else if (commandName === 'invites') {
+        const targetUser = interaction.options.getUser('user');
+        const guildId = interaction.guild.id;
+
+        if (targetUser) {
+            // Show specific user invites
+            const board = inviteLeaderboard.get(guildId);
+            const entry = board?.get(targetUser.id);
+            const count = entry?.count || 0;
+            const embed = new MessageEmbed()
+                .setColor('#FF5500')
+                .setAuthor({ name: targetUser.tag, iconURL: targetUser.displayAvatarURL({ dynamic: true }) })
+                .setDescription(`📨 **${targetUser.tag}** tem **${count}** convite${count !== 1 ? 's' : ''} válidos.`)
+                .setTimestamp();
+            return interaction.reply({ embeds: [embed] });
+        }
+
+        // Show leaderboard
+        const board = inviteLeaderboard.get(guildId);
+        if (!board || board.size === 0) {
+            return interaction.reply({ content: '📨 Ainda não há dados de convites neste servidor.', ephemeral: true });
+        }
+
+        const sorted = [...board.entries()]
+            .map(([userId, data]) => ({ userId, count: data.count }))
+            .sort((a, b) => b.count - a.count)
+            .slice(0, 15);
+
+        const medals = ['🥇', '🥈', '🥉'];
+        const lines = await Promise.all(sorted.map(async (entry, i) => {
+            const user = await client.users.fetch(entry.userId).catch(() => null);
+            const name = user ? user.tag : `<@${entry.userId}>`;
+            const medal = medals[i] || `**${i + 1}.**`;
+            return `${medal} ${name} — **${entry.count}** convite${entry.count !== 1 ? 's' : ''}`;
+        }));
+
+        const embed = new MessageEmbed()
+            .setColor('#FF5500')
+            .setTitle('📨 Ranking de Convites')
+            .setDescription(lines.join('\n'))
+            .setFooter({ text: `${interaction.guild.name} • Desde o último restart do bot` })
+            .setTimestamp();
+
+        return interaction.reply({ embeds: [embed] });
     }
 
     // ============================================
@@ -3208,7 +3414,9 @@ async function checkTeamFeed() {
                 if (matchRes?.ok) {
                     const matchData = await matchRes.json().catch(() => null);
                     const results = matchData?.items || matchData?.data || (Array.isArray(matchData) ? matchData : []);
-                    for (const match of results.slice(0, 5)) {
+                    // Filter to only team-relevant results (name match)
+                    const teamResults = results.filter(m => matchesTeam(m));
+                    for (const match of teamResults.slice(0, 5)) {
                         const feedKey = `result:${guild.id}:${match.id}`;
                         if (postedFeedItems.has(feedKey)) continue;
                         postedFeedItems.add(feedKey);
@@ -3221,10 +3429,18 @@ async function checkTeamFeed() {
                         const score = `${match.resultado_equipa1 ?? 0}-${match.resultado_equipa2 ?? 0}`;
                         const event = match.torneio_nome || '';
 
+                        // Build maps text from map1-map5 columns
+                        let mapsText = '';
+                        for (let i = 1; i <= 5; i++) {
+                            if (match[`map${i}`]) {
+                                mapsText += `\n🗺️ ${match[`map${i}`]}: ${match[`map${i}_score1`] ?? 0}-${match[`map${i}_score2`] ?? 0}`;
+                            }
+                        }
+
                         const embed = new MessageEmbed()
                             .setColor('#2ecc71')
                             .setTitle(`🏆 ${team1} vs ${team2}`)
-                            .setDescription(`**Resultado:** ${score}${event ? `\n**Evento:** ${event}` : ''}`)
+                            .setDescription(`**Resultado:** ${score}${event ? `\n**Evento:** ${event}` : ''}${mapsText ? `\n\n**Mapas:**${mapsText}` : ''}`)
                             .setFooter({ text: 'Resultado final' })
                             .setTimestamp(match.data_jogo ? new Date(match.data_jogo) : new Date());
                         if (match.equipa1_logo) embed.setThumbnail(match.equipa1_logo);
@@ -3241,7 +3457,8 @@ async function checkTeamFeed() {
                 if (statsRes?.ok) {
                     const statsData = await statsRes.json().catch(() => null);
                     const results = statsData?.items || statsData?.data || (Array.isArray(statsData) ? statsData : []);
-                    for (const match of results.slice(0, 3)) {
+                    const teamStatsResults = results.filter(m => matchesTeam(m));
+                    for (const match of teamStatsResults.slice(0, 3)) {
                         const feedKey = `stats:${guild.id}:${match.id}`;
                         if (postedFeedItems.has(feedKey)) continue;
 
@@ -3258,20 +3475,54 @@ async function checkTeamFeed() {
                         const channel = guild.channels.cache.get(cfg.stats_channel_id);
                         if (!channel) continue;
 
-                        const team1 = match.equipa1_nome || 'Equipa 1';
-                        const team2 = match.equipa2_nome || 'Equipa 2';
-                        const score = `${match.resultado_equipa1 ?? 0}-${match.resultado_equipa2 ?? 0}`;
+                        const team1 = detail.equipa1_nome || match.equipa1_nome || 'Equipa 1';
+                        const team2 = detail.equipa2_nome || match.equipa2_nome || 'Equipa 2';
+                        const score = `${detail.resultado_equipa1 ?? match.resultado_equipa1 ?? 0}-${detail.resultado_equipa2 ?? match.resultado_equipa2 ?? 0}`;
 
-                        // Build stats description from match detail
+                        // Maps: use maps_played or maps array from detail
                         let statsText = `**${team1}** ${score} **${team2}**`;
-                        const maps = detail.mapas || detail.maps || [];
+                        const maps = detail.maps_played || detail.maps || [];
                         if (maps.length > 0) {
                             statsText += '\n\n**Mapas:**';
                             for (const map of maps) {
-                                const mapName = map.mapa || map.name || 'Mapa';
-                                const mapScore = `${map.resultado_equipa1 ?? '-'}-${map.resultado_equipa2 ?? '-'}`;
-                                statsText += `\n🗺️ ${mapName}: ${mapScore}`;
+                                const mapName = map.map_name || map.nome || map.mapa || 'Mapa';
+                                const s1 = map.score_team1 ?? map.score1 ?? '-';
+                                const s2 = map.score_team2 ?? map.score2 ?? '-';
+                                statsText += `\n🗺️ ${mapName}: ${s1}-${s2}`;
                             }
+                        }
+
+                        // Scoreboard: top players from each team
+                        const formatPlayer = (p) => {
+                            const nick = p.nickname || p.nick || '?';
+                            const k = p.kills || 0;
+                            const d = p.deaths || 0;
+                            const kd = p.kd_ratio || (d > 0 ? (k / d).toFixed(2) : k.toFixed(2));
+                            return `${nick}: ${k}/${d} (${kd} K/D)`;
+                        };
+                        const t1Players = Array.isArray(detail.jogadores_equipa1) ? detail.jogadores_equipa1 : [];
+                        const t2Players = Array.isArray(detail.jogadores_equipa2) ? detail.jogadores_equipa2 : [];
+                        if (t1Players.length > 0 || t2Players.length > 0) {
+                            const sortByKills = (a, b) => (b.kills || 0) - (a.kills || 0);
+                            if (t1Players.length > 0) {
+                                statsText += `\n\n**${team1}:**`;
+                                for (const p of [...t1Players].sort(sortByKills).slice(0, 5)) {
+                                    statsText += `\n> ${formatPlayer(p)}`;
+                                }
+                            }
+                            if (t2Players.length > 0) {
+                                statsText += `\n\n**${team2}:**`;
+                                for (const p of [...t2Players].sort(sortByKills).slice(0, 5)) {
+                                    statsText += `\n> ${formatPlayer(p)}`;
+                                }
+                            }
+                        }
+
+                        // MVP
+                        const mvp = detail.mvp;
+                        if (mvp && mvp.nickname) {
+                            const mvpKd = mvp.kd_ratio ? Number(mvp.kd_ratio).toFixed(2) : '?';
+                            statsText += `\n\n⭐ **MVP:** ${mvp.nickname} — ${mvp.kills || 0}/${mvp.deaths || 0} (${mvpKd} K/D)`;
                         }
 
                         const embed = new MessageEmbed()

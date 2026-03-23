@@ -154,5 +154,36 @@ module.exports = [
     {
         name: 'comandos',
         description: 'Lista todos os comandos disponíveis do bot'
+    },
+    {
+        name: 'lft',
+        description: 'Lista de jogadores free agents (Looking For Team)',
+        options: [
+            {
+                name: 'role',
+                description: 'Filtrar por role (AWPER, RIFLER, ENTRY, etc.)',
+                type: 3, // STRING
+                required: false,
+                choices: [
+                    { name: 'AWPER', value: 'AWPER' },
+                    { name: 'RIFLER', value: 'RIFLER' },
+                    { name: 'ENTRY', value: 'ENTRY' },
+                    { name: 'SUPPORT', value: 'SUPPORT' },
+                    { name: 'IGL', value: 'IGL' }
+                ]
+            }
+        ]
+    },
+    {
+        name: 'invites',
+        description: 'Ver ranking de convites do servidor',
+        options: [
+            {
+                name: 'user',
+                description: 'Ver convites de um utilizador específico',
+                type: 6, // USER
+                required: false
+            }
+        ]
     }
 ];
