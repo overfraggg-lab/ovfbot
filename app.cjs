@@ -3187,6 +3187,8 @@ function resolveNewsImage(img) {
     if (!img) return null;
     if (/^https?:\/\//i.test(img)) return img;
     if (img.startsWith('/')) return `${SITE_API_URL}${img}`;
+    // Plain filename (e.g. "abc123_main.jpg") — build the full URL
+    if (/\.(jpg|jpeg|png|gif|webp)$/i.test(img)) return `${SITE_API_URL}/backend/news-image/${img}`;
     return null;
 }
 
@@ -3303,9 +3305,12 @@ function saveFeedItems() {
     } catch { /* ignore */ }
 }
 
+let _feedRunning = false;
 async function checkTeamFeed() {
     if (!client.user || !isConnected) return;
-
+    if (_feedRunning) { log('[teamFeed] Anterior ainda a correr — skip'); return; }
+    _feedRunning = true;
+    try {
     for (const guild of client.guilds.cache.values()) {
         const cfg = getScopedConfig('teamFeed', guild.id, teamFeedConfig);
         if (!cfg.enabled) continue;
@@ -3568,6 +3573,7 @@ async function checkTeamFeed() {
     }
     // Persist posted items to avoid duplicates after restart
     saveFeedItems();
+    } finally { _feedRunning = false; }
 }
 
 // Start sync + polling after bot connects
