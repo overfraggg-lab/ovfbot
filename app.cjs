@@ -3210,7 +3210,8 @@ async function broadcastNews(article) {
                 .setDescription(article.resumo || article.descricao || '')
                 .setFooter({ text: 'OVERFRAG Notícias' })
                 .setTimestamp(article.data_publicacao ? new Date(article.data_publicacao) : new Date());
-            if (article.imagem) embed.setImage(article.imagem);
+            const imgUrl = article.imagem;
+            if (imgUrl && /^https?:\/\//i.test(imgUrl)) embed.setImage(imgUrl);
             await channel.send({ embeds: [embed] });
             log(`Notícia enviada: "${title}" para #${channel.name} (guild ${guild.id})`);
         } catch (e) {
@@ -3332,7 +3333,8 @@ async function checkTeamFeed() {
                             .setDescription(article.resumo || article.excerpt || article.descricao || '')
                             .setFooter({ text: 'OVERFRAG Notícias' })
                             .setTimestamp(article.data_publicacao ? new Date(article.data_publicacao) : new Date());
-                        if (article.imagem || article.image_url) embed.setImage(article.imagem || article.image_url);
+                        const artImg = article.imagem || article.image_url;
+                        if (artImg && /^https?:\/\//i.test(artImg)) embed.setImage(artImg);
                         await channel.send({ embeds: [embed] }).catch(e => logError('Erro ao enviar notícia', e));
                     }
                 }
@@ -3341,6 +3343,7 @@ async function checkTeamFeed() {
             // Team-specific feeds (upcoming, live, results, stats) require a team
             if (!hasTeam) continue;
             const teamQuery = encodeURIComponent(cfg.team_name);
+            const equipaId = cfg.team_id || teamQuery;
             const teamLower = cfg.team_name.toLowerCase();
 
             const matchesTeam = (m) => {
@@ -3421,7 +3424,7 @@ async function checkTeamFeed() {
 
             // --- Results (selected team only) ---
             if (cfg.send_results && cfg.results_channel_id) {
-                const matchRes = await fetch(`${SITE_API_URL}/backend/jogos/resultados?equipa=${teamQuery}&limit=5`, {
+                const matchRes = await fetch(`${SITE_API_URL}/backend/jogos/resultados?equipa=${equipaId}&limit=5`, {
                     signal: AbortSignal.timeout(10000)
                 }).catch(() => null);
                 if (matchRes?.ok) {
@@ -3465,7 +3468,7 @@ async function checkTeamFeed() {
 
             // --- Match Stats (selected team only — fetch stats for finished team games) ---
             if (cfg.send_match_stats && cfg.stats_channel_id) {
-                const statsRes = await fetch(`${SITE_API_URL}/backend/jogos/resultados?equipa=${teamQuery}&limit=3`, {
+                const statsRes = await fetch(`${SITE_API_URL}/backend/jogos/resultados?equipa=${equipaId}&limit=3`, {
                     signal: AbortSignal.timeout(10000)
                 }).catch(() => null);
                 if (statsRes?.ok) {
