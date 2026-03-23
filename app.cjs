@@ -3182,6 +3182,14 @@ async function sendEmbedAction(guildId, data) {
     log(`Embed enviado via queue para #${channel.name} (guild ${guildId})`);
 }
 
+// Resolve a potentially relative image URL to an absolute one
+function resolveNewsImage(img) {
+    if (!img) return null;
+    if (/^https?:\/\//i.test(img)) return img;
+    if (img.startsWith('/')) return `${SITE_API_URL}${img}`;
+    return null;
+}
+
 // Broadcast a published news article to all guilds with news channel configured
 async function broadcastNews(article) {
     if (!article || !article.id) return;
@@ -3207,11 +3215,11 @@ async function broadcastNews(article) {
                 .setColor('#5865F2')
                 .setTitle(`📰 ${title}`)
                 .setURL(url)
-                .setDescription(article.resumo || article.descricao || '')
+                .setDescription(article.lead || article.subtitulo || article.resumo || '')
                 .setFooter({ text: 'OVERFRAG Notícias' })
-                .setTimestamp(article.data_publicacao ? new Date(article.data_publicacao) : new Date());
-            const imgUrl = article.imagem;
-            if (imgUrl && /^https?:\/\//i.test(imgUrl)) embed.setImage(imgUrl);
+                .setTimestamp(article.created_at ? new Date(article.created_at) : new Date());
+            const imgUrl = resolveNewsImage(article.imagem_principal || article.imagem_capa);
+            if (imgUrl) embed.setImage(imgUrl);
             await channel.send({ embeds: [embed] });
             log(`Notícia enviada: "${title}" para #${channel.name} (guild ${guild.id})`);
         } catch (e) {
@@ -3307,12 +3315,12 @@ async function checkTeamFeed() {
 
             // --- News (ALL news — independent of team selection) ---
             if (cfg.send_news && cfg.news_channel_id) {
-                const newsRes = await fetch(`${SITE_API_URL}/backend/api/noticias?limit=5`, {
+                const newsRes = await fetch(`${SITE_API_URL}/backend/noticias?limit=5`, {
                     signal: AbortSignal.timeout(10000)
                 }).catch(() => null);
                 if (newsRes?.ok) {
                     const newsData = await newsRes.json().catch(() => null);
-                    const articles = newsData?.data || newsData?.noticias || (Array.isArray(newsData) ? newsData : []);
+                    const articles = newsData?.items || newsData?.data || (Array.isArray(newsData) ? newsData : []);
                     for (const article of articles) {
                         const feedKey = `news:${guild.id}:${article.id}`;
                         if (postedFeedItems.has(feedKey)) continue;
@@ -3330,11 +3338,11 @@ async function checkTeamFeed() {
                             .setColor('#5865F2')
                             .setTitle(`📰 ${title}`)
                             .setURL(newsUrl)
-                            .setDescription(article.resumo || article.excerpt || article.descricao || '')
+                            .setDescription(article.lead || article.subtitulo || article.resumo || '')
                             .setFooter({ text: 'OVERFRAG Notícias' })
-                            .setTimestamp(article.data_publicacao ? new Date(article.data_publicacao) : new Date());
-                        const artImg = article.imagem || article.image_url;
-                        if (artImg && /^https?:\/\//i.test(artImg)) embed.setImage(artImg);
+                            .setTimestamp(article.created_at ? new Date(article.created_at) : new Date());
+                        const artImg = resolveNewsImage(article.imagem_principal || article.imagem_capa);
+                        if (artImg) embed.setImage(artImg);
                         await channel.send({ embeds: [embed] }).catch(e => logError('Erro ao enviar notícia', e));
                     }
                 }
