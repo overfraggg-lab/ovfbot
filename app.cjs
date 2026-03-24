@@ -699,18 +699,33 @@ client.on('guildMemberRemove', async member => {
         logError('Erro ao enviar leave message', err);
     }
 
-    // Update server stats if enabled
-    updateServerStats(member.guild);
+    // Schedule server stats update (debounced)
+    scheduleStatsUpdate(member.guild);
 });
 
 // Also update stats on member join
 client.on('guildMemberAdd', async member => {
-    updateServerStats(member.guild);
+    scheduleStatsUpdate(member.guild);
 });
 
 // ============================================
 // SERVER STATS (Voice Channel Counters)
 // ============================================
+
+// Debounce timers per guild — Discord rate limits voice channel renames (2 per 10 min)
+const statsPendingTimers = new Map(); // guildId -> timeout
+const STATS_DEBOUNCE_MS = 30_000; // 30s — batch rapid join/leave bursts
+
+function scheduleStatsUpdate(guild) {
+    if (!guild) return;
+    const gid = guild.id;
+    if (statsPendingTimers.has(gid)) clearTimeout(statsPendingTimers.get(gid));
+    statsPendingTimers.set(gid, setTimeout(() => {
+        statsPendingTimers.delete(gid);
+        updateServerStats(guild);
+    }, STATS_DEBOUNCE_MS));
+}
+
 async function updateServerStats(guild) {
     if (!guild) return;
 
@@ -759,6 +774,7 @@ async function updateServerStats(guild) {
                 if (ch && ch.name !== channelName) {
                     try {
                         await ch.setName(channelName);
+                        log(`Stats updated: ${key} = ${data.count} (guild ${guild.id})`);
                     } catch (e) {
                         logError(`Erro ao atualizar stats channel ${key} (guild ${guild.id})`, e);
                     }
@@ -802,7 +818,7 @@ function discoverStatsChannels(guild) {
     }
 }
 
-// Update stats every 10 minutes — all guilds
+// Update stats every 5 minutes — all guilds
 let statsInterval = null;
 client.once('ready', () => {
     // Discover & update stats for ALL guilds
@@ -815,7 +831,7 @@ client.once('ready', () => {
         for (const guild of client.guilds.cache.values()) {
             updateServerStats(guild);
         }
-    }, 10 * 60 * 1000); // 10 min
+    }, 5 * 60 * 1000); // 5 min
 });
 
 // ============================================
