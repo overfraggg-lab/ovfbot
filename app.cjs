@@ -712,7 +712,11 @@ client.on('guildMemberAdd', async member => {
 // SERVER STATS (Voice Channel Counters)
 // ============================================
 async function updateServerStats(guild) {
-    if (!serverStatsConfig.enabled || !guild) return;
+    if (!guild) return;
+
+    // Use guild-scoped config (falls back to global)
+    const cfg = getScopedConfig('serverStats', guild.id, serverStatsConfig);
+    if (!cfg.enabled) return;
 
     try {
         // Fetch all members to ensure cache is populated (requires GUILD_MEMBERS intent)
@@ -733,19 +737,21 @@ async function updateServerStats(guild) {
         const roleCount = guild.roles.cache.size;
         const boostCount = guild.premiumSubscriptionCount || 0;
 
+        const cfgChannels = cfg.channels || serverStatsConfig.channels;
         const counters = {
-            members: { count: memberCount, config: serverStatsConfig.channels.members },
-            online: { count: onlineCount, config: serverStatsConfig.channels.online },
-            channels: { count: channelCount, config: serverStatsConfig.channels.channels },
-            roles: { count: roleCount, config: serverStatsConfig.channels.roles },
-            boosts: { count: boostCount, config: serverStatsConfig.channels.boosts }
+            members: { count: memberCount, config: cfgChannels.members },
+            online: { count: onlineCount, config: cfgChannels.online },
+            channels: { count: channelCount, config: cfgChannels.channels },
+            roles: { count: roleCount, config: cfgChannels.roles },
+            boosts: { count: boostCount, config: cfgChannels.boosts }
         };
 
         for (const [key, data] of Object.entries(counters)) {
             if (!data.config.enabled) continue;
 
             const channelName = data.config.name.replace('{count}', data.count.toString());
-            const existingId = statsChannelIds.get(key);
+            const mapKey = `${guild.id}:${key}`;
+            const existingId = statsChannelIds.get(mapKey);
 
             if (existingId) {
                 // Update existing channel name
@@ -754,53 +760,61 @@ async function updateServerStats(guild) {
                     try {
                         await ch.setName(channelName);
                     } catch (e) {
-                        logError(`Erro ao atualizar stats channel ${key}`, e);
+                        logError(`Erro ao atualizar stats channel ${key} (guild ${guild.id})`, e);
                     }
                 }
-            } else if (serverStatsConfig.category_id) {
+            } else if (cfg.category_id) {
                 // Create new voice channel under category
                 try {
                     const newCh = await guild.channels.create(channelName, {
                         type: 'GUILD_VOICE',
-                        parent: serverStatsConfig.category_id,
+                        parent: cfg.category_id,
                         permissionOverwrites: [{
                             id: guild.id,
                             deny: ['CONNECT']
                         }]
                     });
-                    statsChannelIds.set(key, newCh.id);
-                    log(`Stats channel created: ${key} -> ${newCh.name}`);
+                    statsChannelIds.set(mapKey, newCh.id);
+                    log(`Stats channel created: ${key} -> ${newCh.name} (guild ${guild.id})`);
                 } catch (e) {
-                    logError(`Erro ao criar stats channel ${key}`, e);
+                    logError(`Erro ao criar stats channel ${key} (guild ${guild.id})`, e);
                 }
             }
         }
     } catch (err) {
-        logError('Erro ao atualizar server stats', err);
+        logError(`Erro ao atualizar server stats (guild ${guild.id})`, err);
     }
 }
 
-// Update stats every 10 minutes
+// Discover existing stats voice channels for a guild
+function discoverStatsChannels(guild) {
+    const cfg = getScopedConfig('serverStats', guild.id, serverStatsConfig);
+    if (!cfg.enabled) return;
+    const cfgChannels = cfg.channels || serverStatsConfig.channels;
+    for (const [key, conf] of Object.entries(cfgChannels)) {
+        if (!conf.enabled) continue;
+        const prefix = conf.name.split('{count}')[0];
+        const existing = guild.channels.cache.find(c => c.type === 'GUILD_VOICE' && c.name.startsWith(prefix) && c.parentId === cfg.category_id);
+        if (existing) {
+            statsChannelIds.set(`${guild.id}:${key}`, existing.id);
+            log(`Stats channel found: ${key} -> ${existing.name} (guild ${guild.id})`);
+        }
+    }
+}
+
+// Update stats every 10 minutes — all guilds
 let statsInterval = null;
 client.once('ready', () => {
-    const guild = getMainGuild();
-    if (guild && serverStatsConfig.enabled) {
-        // Find existing stats channels by name pattern
-        for (const [key, conf] of Object.entries(serverStatsConfig.channels)) {
-            if (!conf.enabled) continue;
-            const prefix = conf.name.split('{count}')[0];
-            const existing = guild.channels.cache.find(c => c.type === 'GUILD_VOICE' && c.name.startsWith(prefix) && c.parentId === serverStatsConfig.category_id);
-            if (existing) {
-                statsChannelIds.set(key, existing.id);
-                log(`Stats channel found: ${key} -> ${existing.name}`);
-            }
-        }
+    // Discover & update stats for ALL guilds
+    for (const guild of client.guilds.cache.values()) {
+        discoverStatsChannels(guild);
         updateServerStats(guild);
     }
 
     statsInterval = setInterval(() => {
-        const g = getMainGuild();
-        if (g) updateServerStats(g);
+        for (const guild of client.guilds.cache.values()) {
+            updateServerStats(guild);
+        }
     }, 10 * 60 * 1000); // 10 min
 });
 
@@ -2868,22 +2882,23 @@ const server = http.createServer(async (req, res) => {
             saveConfig();
             log(`ServerStats config atualizada via API: ${JSON.stringify(serverStatsConfig)}`);
 
-            // If just enabled, trigger update
+            // If just enabled, trigger update for main guild
             if (serverStatsConfig.enabled && !wasEnabled) {
                 const guild = getMainGuild();
                 if (guild) updateServerStats(guild);
             }
 
-            // If disabled, delete stats channels
+            // If disabled, delete stats channels for main guild
             if (!serverStatsConfig.enabled && wasEnabled) {
                 const guild = getMainGuild();
                 if (guild) {
-                    for (const [key, chId] of statsChannelIds.entries()) {
+                    for (const [mapKey, chId] of statsChannelIds.entries()) {
+                        if (!mapKey.startsWith(guild.id + ':')) continue;
                         try {
                             const ch = guild.channels.cache.get(chId);
                             if (ch) await ch.delete('Server stats disabled');
-                            statsChannelIds.delete(key);
-                        } catch (e) { logError(`Erro ao apagar stats channel ${key}`, e); }
+                            statsChannelIds.delete(mapKey);
+                        } catch (e) { logError(`Erro ao apagar stats channel ${mapKey}`, e); }
                     }
                 }
             }
@@ -2924,7 +2939,25 @@ const server = http.createServer(async (req, res) => {
             // Trigger update if just enabled
             if (merged.enabled && !wasEnabled) {
                 const guild = getGuildById(guildId);
-                if (guild) updateServerStats(guild);
+                if (guild) {
+                    discoverStatsChannels(guild);
+                    updateServerStats(guild);
+                }
+            }
+
+            // If disabled, clean up stats channels for this guild
+            if (!merged.enabled && wasEnabled) {
+                const guild = getGuildById(guildId);
+                if (guild) {
+                    for (const [mapKey, chId] of statsChannelIds.entries()) {
+                        if (!mapKey.startsWith(guildId + ':')) continue;
+                        try {
+                            const ch = guild.channels.cache.get(chId);
+                            if (ch) await ch.delete('Server stats disabled');
+                            statsChannelIds.delete(mapKey);
+                        } catch (e) { logError(`Erro ao apagar stats channel ${mapKey}`, e); }
+                    }
+                }
             }
 
             return jsonResponse(res, 200, { success: true, data: merged });
