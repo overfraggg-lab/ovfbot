@@ -3441,7 +3441,14 @@ async function checkTeamFeed() {
                     const channel = guild.channels.cache.get(cfg.upcoming_channel_id);
                     if (!channel) continue;
 
-                    const dateStr = match.data_jogo ? new Date(match.data_jogo).toLocaleDateString('pt-PT', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+                    let dateStr = '';
+                    if (match.data_jogo) {
+                        const d = new Date(match.data_jogo);
+                        const ds = d.toISOString().split('T')[0];
+                        const ts = match.hora_jogo || '00:00:00';
+                        const full = new Date(`${ds}T${ts}`);
+                        dateStr = full.toLocaleDateString('pt-PT', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+                    }
                     const embed = new MessageEmbed()
                         .setColor('#3498db')
                         .setTitle(`📅 ${match.equipa1_nome || 'TBD'} vs ${match.equipa2_nome || 'TBD'}`)
