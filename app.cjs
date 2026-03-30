@@ -132,12 +132,12 @@ let ticketConfig = {
     category_id: '',
     log_channel_id: '',
     categories: [
-        { id: 'noticias', name: 'Notícias', emoji: '📰', description: 'Sugestões ou correções de notícias' },
-        { id: 'equipas', name: 'Equipas', emoji: '🛡️', description: 'Assuntos relacionados com equipas' },
-        { id: 'jogadores', name: 'Jogadores', emoji: '🎮', description: 'Perfis de jogadores e reclamações' },
-        { id: 'torneios', name: 'Torneios', emoji: '🏆', description: 'Torneios e competições' },
-        { id: 'parcerias', name: 'Parcerias', emoji: '🤝', description: 'Propostas de parceria' },
-        { id: 'outros', name: 'Outros', emoji: '📋', description: 'Outros assuntos' }
+        { id: 'noticias', name: 'Notícias', emoji: '📰', description: 'Sugestões ou correções de notícias', discord_category_id: '' },
+        { id: 'equipas', name: 'Equipas', emoji: '🛡️', description: 'Assuntos relacionados com equipas', discord_category_id: '' },
+        { id: 'jogadores', name: 'Jogadores', emoji: '🎮', description: 'Perfis de jogadores e reclamações', discord_category_id: '' },
+        { id: 'torneios', name: 'Torneios', emoji: '🏆', description: 'Torneios e competições', discord_category_id: '' },
+        { id: 'parcerias', name: 'Parcerias', emoji: '🤝', description: 'Propostas de parceria', discord_category_id: '' },
+        { id: 'outros', name: 'Outros', emoji: '📋', description: 'Outros assuntos', discord_category_id: '' }
     ],
     embed: {
         title: '🎫 Sistema de Tickets',
@@ -1043,19 +1043,47 @@ client.on('interactionCreate', async interaction => {
             const guild = interaction.guild;
             const member = interaction.member;
 
-            // Check if user already has an open ticket
+            // Determine Discord category: per-category first, then global fallback
+            let discordCategoryId = category?.discord_category_id || cfg.category_id || null;
+
+            // Auto-create Discord category if none exists for this ticket category
+            if (!discordCategoryId) {
+                try {
+                    const newCat = await guild.channels.create(`Tickets - ${categoryName}`, {
+                        type: 'GUILD_CATEGORY',
+                    });
+                    discordCategoryId = newCat.id;
+                    // Save the auto-created category ID back to config
+                    if (category) {
+                        category.discord_category_id = newCat.id;
+                        if (guildId) {
+                            const scopedCfg = getScopedConfig('tickets', guildId, ticketConfig);
+                            const cat = scopedCfg.categories.find(c => c.id === categoryId);
+                            if (cat) cat.discord_category_id = newCat.id;
+                            setScopedConfig('tickets', guildId, scopedCfg);
+                        }
+                        saveConfig();
+                    }
+                    log(`Auto-created Discord category "${newCat.name}" for ticket category "${categoryName}"`);
+                } catch (catErr) {
+                    logError('Erro ao criar categoria Discord automaticamente', catErr);
+                    // Continue without category — ticket still works
+                }
+            }
+
+            // Check if user already has an open ticket in this category
             const existingTicket = guild.channels.cache.find(ch =>
                 ch.name === `ticket-${member.user.username.toLowerCase().replace(/[^a-z0-9]/g, '')}` &&
-                ch.parentId === cfg.category_id
+                ch.parentId === discordCategoryId
             );
             if (existingTicket) {
                 return interaction.editReply(`❌ Já tens um ticket aberto: <#${existingTicket.id}>`);
             }
 
-            // Create ticket channel in the configured category
+            // Create ticket channel in the resolved category
             const ticketChannel = await guild.channels.create(`ticket-${member.user.username}`, {
                 type: 'GUILD_TEXT',
-                parent: cfg.category_id || undefined,
+                parent: discordCategoryId || undefined,
                 topic: `${categoryEmoji} ${categoryName} - Ticket de ${member.user.tag}`,
                 permissionOverwrites: [
                     { id: guild.id, deny: ['VIEW_CHANNEL'] },
